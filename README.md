@@ -173,6 +173,7 @@ make
   photosignature  포토시그니처 지점을 수집한다
   planbstudio     플랜비스튜디오 지점을 수집한다
   picdot          픽닷 지점을 수집한다 (KAKAO_API_KEY 필요)
+  monomansion     모노맨션 지점을 수집한다 (KAKAO_API_KEY 필요)
   localstack      로컬 S3(LocalStack)를 띄운다
   localstack-down 로컬 S3를 내린다
   s3-init         로컬 버킷을 만든다
@@ -244,9 +245,10 @@ make lifefourcuts
 make photosignature
 make planbstudio
 make picdot
+make monomansion
 ```
 
-`picdot`은 Kakao Local API를 호출하므로 `KAKAO_API_KEY`가 필요합니다. `.env`에 넣어두면
+`picdot`과 `monomansion`은 Kakao Local API를 호출하므로 `KAKAO_API_KEY`가 필요합니다. `.env`에 넣어두면
 `make`가 알아서 읽습니다. `uv run`은 `.env`를 자동으로 읽지 않으므로, Makefile을 거치지
 않고 직접 실행할 때는 `uv run --env-file .env ...`로 지정해야 합니다.
 

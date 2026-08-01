@@ -11,6 +11,7 @@ class Platform(StrEnum):
     """지점 정보를 수집한 브랜드."""
 
     LIFE_FOUR_CUT = "LIFE_FOUR_CUT"
+    MONO_MANSION = "MONO_MANSION"
     PHOTO_SIGNATURE = "PHOTO_SIGNATURE"
     PICDOT = "PICDOT"
     PLANB_STUDIO = "PLANB_STUDIO"
