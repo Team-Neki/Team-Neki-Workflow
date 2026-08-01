@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+build/
+dist/
+
+# Prefect
+.prefect/
+prefect.db
+
+# 도구 로컬 상태
+.omc/
+
+# 에디터
+.idea/
+.vscode/
+.DS_Store

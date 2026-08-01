@@ -1,0 +1,210 @@
+# CLAUDE.md
+
+이 문서는 이 저장소에서 코드를 작성할 때 지켜야 할 규약과 빠지기 쉬운 함정을 다룹니다.
+
+## 계층 구조
+
+세 디렉토리는 각각 하나의 질문에만 답합니다.
+
+- `deployments/` : 언제 돌리나 (스케줄)
+- `flows/` : 무엇을 어떤 순서로 (`@flow`)
+- `tasks/` : 실제로 하는 일 (`@task`)
+
+의존은 `deployments -> flows -> tasks` 단방향입니다.
+
+```text
+deployments/  ->  flows/  ->  tasks/
+   스케줄          조립         작업
+```
+
+`tasks/`가 `flows/`를 import하거나 `flows/`가 스케줄을 아는 순간 계층 분리가
+무의미해집니다. 작업 로직이 flow 컨텍스트를 필요로 한다면 대개 인자로 받아야 할
+값을 import로 끌어온 것이므로, 시그니처를 먼저 의심해볼 수 있습니다.
+
+## 실행 모델
+
+UI나 cron이 워크플로를 직접 실행하지 않습니다. flow run 레코드를 만들어둘 뿐이고,
+`serve.py`나 worker가 API를 주기적으로 들여다보다 집어갑니다. pull 모델입니다.
+
+```text
+[UI / cron / API]
+      |  1. flow run 레코드 생성 (SCHEDULED)
+      v
+[Prefect API]  <-----+
+                     |  2. 10초마다 폴링
+              [serve.py / worker]
+                     |  3. entrypoint import 후 실행
+                     v
+                 [flow] -> [task]
+```
+
+여기서 따라오는 성질들이 있습니다.
+
+- 실행 프로세스가 없으면 run이 `SCHEDULED`에 쌓임. 등록만으로는 실행되지 않음
+- 버튼을 눌러도 최대 10초 지연이 있음 (`runner.poll_frequency`, `worker.query_seconds`)
+- 서버가 워커에 접근할 필요 없음. 워커의 outbound만 열리면 됨
+- task는 flow와 같은 프로세스에서 실행됨. `@task`는 재시도와 상태 추적 단위이지
+  실행 격리 단위가 아님
+
+**UI에서 실행하려면 deployment 등록과 실행 프로세스가 둘 다 필요합니다.** 하나만
+있으면 UI에 보이지만 눌러도 진행되지 않거나, 아예 목록에 뜨지 않습니다.
+
+## build() 규약
+
+`deployments/` 아래 모든 모듈은 `RunnerDeployment`를 반환하는 `build()`를 노출해야
+합니다. `deployments/__init__.py`의 `collect()`가 이 이름으로 모듈을 찾습니다.
+
+```python
+from prefect.deployments.runner import RunnerDeployment
+
+from flows.daily_sync import daily_sync
+
+
+def build() -> RunnerDeployment:
+    return daily_sync.to_deployment(name="daily-sync", cron="0 3 * * *")
+```
+
+- 함수명은 `build`로 고정. 다른 이름을 쓰면 `AttributeError`로 실패함
+- 워크플로를 추가할 때 `serve.py`와 `deploy.py`는 건드리지 않음
+- `deployments/<name>.py`와 `flows/<name>.py`는 파일명을 1:1로 맞춤
+
+### 이름을 바꾸면 고아가 남습니다
+
+deployment는 flow 이름과 deployment 이름의 조합(`hello/hello-local`)으로 식별됩니다.
+따라서 flow 함수명이나 `@flow(name=)`을 바꾸면 새 deployment가 만들어지고 **예전
+것은 지워지지 않은 채 남습니다.** entrypoint가 이미 없는 함수를 가리키므로 실행하면
+실패하지만, UI 목록에는 계속 보입니다.
+
+이름을 바꿀 때는 옛 deployment를 직접 지워야 합니다.
+
+```bash
+prefect deployment delete '<옛-flow-이름>/<deployment-이름>'
+```
+
+## 네이밍
+
+- 파일, 모듈 : snake_case (e.g. `daily_sync.py`)
+- flow 함수 : snake_case, 접미사 없음 (e.g. `def daily_sync(...)`)
+- `@flow(name=)` : kebab-case (e.g. `"daily-sync"`). UI 표시명임
+- deployment name : kebab-case (e.g. `"daily-sync"`, `"daily-sync-backfill"`)
+- task 함수 : 동사로 시작 (e.g. `fetch_orders`, `upload_report`)
+
+flow 함수에 `_flow` 접미사를 붙이지 않는 이유는 `flows.daily_sync.daily_sync`처럼
+경로가 이미 역할을 말해주기 때문입니다. import 시 이름이 충돌하면 `as`로 호출부에서
+해결합니다.
+
+## serve.py vs. deploy.py
+
+두 진입점은 용도가 다르며 섞어 쓰면 안 됩니다.
+
+- `serve.py` : 로컬 개발용. 서버나 work pool 없이 한 프로세스로 즉시 확인함
+- `deploy.py` : 운영용. 스케줄만 등록하고 실행은 worker가 담당함
+
+**운영 스케줄 등록은 반드시 `deploy.py`를 거쳐야 합니다.** `prefect deploy`나
+`flow.deploy()`를 직접 호출하면 아래 보존 로직을 건너뜁니다.
+
+## pause는 배포가 덮어씁니다
+
+Prefect는 deployment를 등록할 때 기존 정의를 통째로 덮어씁니다. 따라서 운영자가
+UI에서 꺼둔 스케줄이 배포할 때마다 되살아납니다. Airflow에서 DAG를 pause하면 그
+상태가 메타DB에 남아 유지되는 것과 다릅니다.
+
+재등록이 일어나는 시점은 다음과 같습니다.
+
+- `serve.py` 재시작 : 매번 재등록하므로 프로세스가 뜰 때마다 풀림
+- `deploy()` 재실행 : 배포할 때마다 풀림
+- Prefect 서버 재시작 : 유지됨 (DB에 남음)
+- worker 재시작 : 유지됨 (worker는 정의를 건드리지 않음)
+
+deployment의 `paused` 대신 스케줄의 `active`를 꺼도 마찬가지로 되살아납니다.
+`deploy()`가 cron 인자를 그대로 다시 쓰므로 스케줄 객체가 통째로 교체되기
+때문입니다.
+
+`deploy.py`는 배포 전 `paused`와 각 스케줄의 `active`를 읽어두고 등록 후 되돌려
+이를 막습니다. 반대로 UI에서 다시 켠 것을 배포가 도로 끄지도 않습니다. 이 파일을
+수정할 때는 양방향이 모두 유지되는지 확인해야 합니다.
+
+## 패키지 설정
+
+저장소는 editable로 설치해야 합니다. 설치하지 않으면 `flows`, `tasks` import가
+실행 위치(CWD)에 의존하게 되어 worker를 다른 경로에서 띄울 때 깨집니다.
+
+```bash
+uv pip install -e . --python .venv/bin/python
+```
+
+- venv는 uv로 관리하며 `pip` 실행 파일이 없음. `uv pip`를 사용함
+
+최상위 패키지를 새로 추가하면 `pyproject.toml`의
+`[tool.hatch.build.targets.wheel] packages`에 반드시 등록해야 합니다. 등록을
+빠뜨려도 **로컬에서는 아무 문제가 없어 알아채기 어렵습니다.** editable 설치는
+프로젝트 루트를 통째로 `sys.path`에 넣기 때문에 `packages` 목록과 무관하게 전부
+import되기 때문입니다.
+
+반면 wheel을 빌드하면 나열된 패키지만 포함됩니다. 즉, 로컬과 CI 테스트는
+통과하는데 컨테이너 배포에서만 `ModuleNotFoundError`가 나는 형태로 드러납니다.
+`packages`를 수정했다면 wheel 내용을 직접 확인하는 것이 좋습니다.
+
+```bash
+uv build --wheel --out-dir /tmp/dist
+python -c "import zipfile,glob; w=sorted(glob.glob('/tmp/dist/*.whl'))[-1]; \
+print(sorted({n.split('/')[0] for n in zipfile.ZipFile(w).namelist() if '/' in n}))"
+```
+
+## Prefect 3 API 함정
+
+Prefect 3.8 기준입니다.
+
+- `Flow.deploy()`와 `prefect.serve()`는 동기 함수임. 이벤트 루프 안에서 호출하면
+  실패하므로 `asyncio.run()` 밖에서 불러야 함
+- API가 돌려주는 `DeploymentResponse`에는 `flow_name`이 없음.
+  `flow_name`은 `RunnerDeployment`에만 있음
+- `apply()`는 스케줄을 새로 만들어 ID가 바뀜. 배포 전후로 스케줄을 대응시킬 때는
+  ID가 아니라 `slug`를 쓰고, `slug`가 없으면 순번으로 맞춰야 함
+- `to_deployment(paused=...)`로 등록 시점에 pause 상태를 정할 수 있음.
+  등록 후 되돌리는 것보다 경합이 없어 안전함
+
+## 변경 검증
+
+flow 로직만 바꿨다면 단독 실행으로 충분합니다.
+
+```bash
+.venv/bin/python -c "from flows.hello import hello; hello()"
+```
+
+`deploy.py`나 `deployments/`를 건드렸다면 로컬 서버를 띄워 배포 사이클을 확인해야
+합니다. 실제 스케줄을 다루는 코드라 import 성공만으로는 회귀를 잡을 수 없습니다.
+
+```bash
+PREFECT_HOME=/tmp/pf-test prefect server start --host 127.0.0.1 --port 4301
+export PREFECT_API_URL=http://127.0.0.1:4301/api
+prefect work-pool create neki-pool --type process
+PREFECT_WORK_POOL=neki-pool python deploy.py
+```
+
+검증에는 `PREFECT_HOME`을 임시 경로로 지정해 격리해야 합니다. 지정하지 않으면
+`~/.prefect`의 실제 상태를 건드리게 되고, 테스트로 만든 deployment가 로컬 UI에
+남습니다.
+
+pause 관련 코드를 고쳤다면 양방향을 모두 확인해야 합니다. 끈 것이 배포 후에도
+꺼져 있는지, 그리고 다시 켠 것을 배포가 도로 끄지는 않는지 둘 다 봐야 합니다.
+
+## 로컬 UI
+
+기본 프로파일이 `ephemeral`이라 `PREFECT_API_URL`이 비어 있습니다. 이 상태로
+`serve.py`를 실행하면 프로세스 안에서 임시 서버가 뜨고 종료와 함께 사라지므로
+**UI로 접근할 수 없습니다.** UI를 보려면 서버를 따로 띄우고 API 주소를 지정해야
+합니다.
+
+```bash
+prefect server start --host 127.0.0.1 --port 4200
+export PREFECT_API_URL=http://127.0.0.1:4200/api
+python serve.py
+```
+
+UI는 `http://127.0.0.1:4200`이고, deployment 목록은 `/deployments`입니다.
+
+## 작업 순서
+
+team-neki 저장소이므로 코드를 건드리기 전에 Sprint 앱에 티켓을 먼저 만듭니다.
+어느 에픽 하위에 둘지 불명확하면 임의로 정하지 않고 확인을 받아야 합니다.
