@@ -5,12 +5,12 @@
 """
 
 import re
-from dataclasses import dataclass
 
 import httpx
 from prefect import get_run_logger, task
 
 from flows.common.platform import Platform
+from flows.common.store import CollectedStore
 
 STORE_URL = "https://photosignature.co.kr/bbs/board.php"
 BO_TABLE = "store"
@@ -24,20 +24,8 @@ _ADDRESS = re.compile(r'class="sub1 cut90">([^<]*)</div>')
 _IDX = re.compile(r"wr_id=(\d+)")
 
 
-@dataclass(frozen=True)
-class Store:
-    """지점 하나.
-
-    포토시그니처는 지점별 전화번호를 노출하지 않는다. 문서 전체에 대표번호
-    하나만 있어 phone 필드를 두지 않았다.
-    """
-
-    idx: str
-    name: str
-    address: str | None
-    longitude: float | None
-    latitude: float | None
-    platform: Platform = Platform.PHOTO_SIGNATURE
+# 포토시그니처는 지점별 전화번호를 노출하지 않는다. 문서 전체에 대표번호 하나만
+# 있어 phone은 채우지 않고 None으로 둔다.
 
 
 @task(retries=3, retry_delay_seconds=[2, 5, 10])
@@ -57,13 +45,13 @@ def fetch_store_page(*, timeout: float = 30.0) -> str:
     return response.text
 
 
-def extract_stores(html: str) -> tuple[list[Store], int]:
+def extract_stores(html: str) -> tuple[list[CollectedStore], int]:
     """마커 블록에서 지점을 추출한다. Prefect에 의존하지 않는 순수 함수다.
 
     이름이 없는 블록은 지점이 아니라 지도 중심 설정(map.setCenter)이므로
     건너뛴다. 건너뛴 개수를 함께 돌려준다.
     """
-    stores: list[Store] = []
+    stores: list[CollectedStore] = []
     skipped = 0
 
     for block in html.split(MARKER_SPLIT)[1:]:
@@ -78,7 +66,8 @@ def extract_stores(html: str) -> tuple[list[Store], int]:
         address = _ADDRESS.search(block)
 
         stores.append(
-            Store(
+            CollectedStore(
+                platform=Platform.PHOTO_SIGNATURE,
                 idx=idx.group(1),
                 name=name.group(1).strip(),
                 address=address.group(1).strip() or None if address else None,
@@ -92,7 +81,7 @@ def extract_stores(html: str) -> tuple[list[Store], int]:
 
 
 @task
-def parse_stores(html: str) -> list[Store]:
+def parse_stores(html: str) -> list[CollectedStore]:
     """extract_stores를 감싸고 건너뛴 블록 수를 남긴다."""
     stores, skipped = extract_stores(html)
 

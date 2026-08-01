@@ -5,13 +5,13 @@
 """
 
 import os
-from dataclasses import dataclass
 from typing import Any
 
 import httpx
 from prefect import get_run_logger, task
 
 from flows.common.platform import Platform
+from flows.common.store import CollectedStore
 
 SEARCH_URL = "https://dapi.kakao.com/v2/local/search/keyword.json"
 QUERY = "픽닷"
@@ -23,26 +23,12 @@ PAGE_SIZE = 15
 MAX_EXPOSED = 45
 
 
-@dataclass(frozen=True)
-class Store:
-    """지점 하나.
-
-    idx는 Kakao가 부여한 장소 id다. 중복 제거에 쓴다.
-
-    address는 도로명을 우선하고 없으면 지번으로 채운다. jibun_address는 지번을
-    그대로 둔다. kakao_place_url은 카카오맵 상세 링크이며, 영업시간이나 평점처럼
-    검색 API가 주지 않는 정보를 나중에 붙일 때 진입점이 된다.
-    """
-
-    idx: str
-    name: str
-    address: str | None
-    jibun_address: str | None
-    phone: str | None
-    longitude: float | None
-    latitude: float | None
-    kakao_place_url: str | None
-    platform: Platform = Platform.PICDOT
+# idx는 Kakao가 부여한 장소 id다. 중복 제거에 쓴다.
+#
+# 이 브랜드만 수집원이 Kakao라 지번 주소를 공짜로 받을 수 있지만 담지 않는다.
+# 다른 브랜드에는 없는 값이라 담으면 collect 출력이 브랜드마다 달라지고, 그러면
+# enrich가 4개를 한 번에 받지 못한다. 지번은 enrich가 모든 브랜드에 대해 같은
+# 방식으로 채운다.
 
 
 def _api_key() -> str:
@@ -64,7 +50,7 @@ def _coordinate(value: str | None) -> float | None:
         return None
 
 
-def to_store(document: dict[str, Any]) -> Store | None:
+def to_store(document: dict[str, Any]) -> CollectedStore | None:
     """장소 문서 하나를 Store로 옮긴다. 이름이나 id가 없으면 버린다."""
     idx = document.get("id")
     name = (document.get("place_name") or "").strip()
@@ -76,16 +62,15 @@ def to_store(document: dict[str, Any]) -> Store | None:
     # 도로명 주소가 비어 있는 장소가 있어 지번 주소로 대체한다.
     address = (document.get("road_address_name") or "").strip() or jibun
 
-    return Store(
+    return CollectedStore(
+        platform=Platform.PICDOT,
         idx=str(idx),
         name=name,
         address=address or None,
-        jibun_address=jibun or None,
         phone=(document.get("phone") or "").strip() or None,
         # Kakao는 x가 경도, y가 위도다.
         longitude=_coordinate(document.get("x")),
         latitude=_coordinate(document.get("y")),
-        kakao_place_url=(document.get("place_url") or "").strip() or None,
     )
 
 
@@ -106,7 +91,7 @@ def search_page(page: int, *, query: str = QUERY, timeout: float = 20.0) -> dict
 
 
 @task
-def parse_stores(payload: dict[str, Any]) -> list[Store]:
+def parse_stores(payload: dict[str, Any]) -> list[CollectedStore]:
     """응답에서 지점을 추출한다."""
     logger = get_run_logger()
 

@@ -15,11 +15,9 @@ FIELD_ORDER = (
     "idx",
     "name",
     "address",
-    "jibun_address",
     "phone",
     "longitude",
     "latitude",
-    "kakao_place_url",
 )
 
 

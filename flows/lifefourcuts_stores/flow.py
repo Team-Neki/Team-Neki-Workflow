@@ -5,9 +5,11 @@ import time
 from prefect import flow, get_run_logger
 
 from flows.common.output import log_stores
+from flows.common.platform import Platform
+from flows.common.storage import put_raw, put_stores
+from flows.common.store import CollectedStore
 from flows.lifefourcuts_stores.stores import (
     PAGE_SIZE,
-    Store,
     fetch_store_page,
     parse_stores,
 )
@@ -21,23 +23,28 @@ MAX_PAGES = 50
 def lifefourcuts_stores(
     max_pages: int = MAX_PAGES,
     delay_seconds: float = 0.5,
-) -> list[Store]:
+    persist: bool = True,
+) -> list[CollectedStore]:
     """1페이지부터 순회하며 지점을 모은다.
 
     이 사이트는 마지막 페이지를 넘겨도 빈 목록을 주지 않고 마지막 페이지를
     반복해서 돌려준다. 따라서 "빈 응답이면 중단"으로는 끝나지 않는다.
     직전 페이지와 식별자 집합이 같으면 더 볼 것이 없다고 판단한다.
+
+    persist를 끄면 S3에 적재하지 않는다. 파싱만 확인할 때 쓴다.
     """
     logger = get_run_logger()
 
-    collected: dict[str, Store] = {}
+    collected: dict[str, CollectedStore] = {}
     previous_ids: set[str] = set()
+    pages: list[tuple[int, str]] = []
 
     for page in range(1, max_pages + 1):
         if page > 1 and delay_seconds > 0:
             time.sleep(delay_seconds)
 
         html = fetch_store_page(page)
+        pages.append((page, html))
         stores = parse_stores(html)
 
         if not stores:
@@ -68,6 +75,15 @@ def lifefourcuts_stores(
 
     stores = list(collected.values())
     log_stores(stores, label="인생네컷")
+
+    if persist:
+        for number, html in pages:
+            put_raw(
+                html,
+                platform=Platform.LIFE_FOUR_CUT,
+                name=f"page-{number:03d}.html",
+            )
+        put_stores(stores, platform=Platform.LIFE_FOUR_CUT)
 
     logger.info("수집 완료: 지점 %d건", len(stores))
     return stores

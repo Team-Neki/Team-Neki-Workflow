@@ -9,12 +9,12 @@ sub4.html에는 지점 데이터가 없고 iframe으로 그누보드 게시판�
 """
 
 import re
-from dataclasses import dataclass
 
 import httpx
 from prefect import get_run_logger, task
 
 from flows.common.platform import Platform
+from flows.common.store import CollectedStore
 
 STORE_URL = "http://planbstudio.co.kr/muse/bbs/board.php"
 BO_TABLE = "store"
@@ -31,21 +31,7 @@ _COORD = re.compile(
 )
 
 
-@dataclass(frozen=True)
-class Store:
-    """지점 하나.
-
-    좌표는 지도에 표시되는 일부 지점에만 있다. 전화는 필드가 있으나 대부분
-    비어 있다.
-    """
-
-    idx: str
-    name: str
-    address: str | None
-    phone: str | None
-    longitude: float | None
-    latitude: float | None
-    platform: Platform = Platform.PLANB_STUDIO
+# 좌표는 지도에 표시되는 일부 지점에만 있다. 전화도 대부분 비어 있다.
 
 
 @task(retries=3, retry_delay_seconds=[2, 5, 10])
@@ -77,7 +63,7 @@ def extract_coordinates(html: str) -> dict[str, tuple[float, float]]:
 
 def extract_stores(
     html: str, coordinates: dict[str, tuple[float, float]] | None = None
-) -> list[Store]:
+) -> list[CollectedStore]:
     """목록 영역에서 지점을 추출하고 좌표를 채운다.
 
     Prefect에 의존하지 않는 순수 함수다. 목록 영역 앞의 지도 스크립트에도
@@ -94,12 +80,13 @@ def extract_stores(
     addresses = _ADDRESS.findall(segment)
     phones = _PHONE.findall(segment)
 
-    stores: list[Store] = []
+    stores: list[CollectedStore] = []
     for position, (idx, name) in enumerate(entries):
         longitude, latitude = coordinates.get(idx, (None, None))
 
         stores.append(
-            Store(
+            CollectedStore(
+                platform=Platform.PLANB_STUDIO,
                 idx=idx,
                 name=name.strip(),
                 address=_clean(addresses[position]) if position < len(addresses) else None,
@@ -128,6 +115,6 @@ def parse_coordinates(html: str) -> dict[str, tuple[float, float]]:
 @task
 def parse_stores(
     html: str, coordinates: dict[str, tuple[float, float]]
-) -> list[Store]:
+) -> list[CollectedStore]:
     """extract_stores를 감싼다."""
     return extract_stores(html, coordinates)

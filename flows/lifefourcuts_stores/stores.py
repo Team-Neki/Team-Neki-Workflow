@@ -4,7 +4,6 @@
 그래서 페이지를 그대로 긁지 않고 해당 엔드포인트를 직접 호출한다.
 """
 
-from dataclasses import dataclass
 from typing import Any
 
 import httpx
@@ -12,6 +11,7 @@ from bs4 import BeautifulSoup
 from prefect import get_run_logger, task
 
 from flows.common.platform import Platform
+from flows.common.store import CollectedStore
 
 LIST_URL = "https://lifefourcuts.com/ajax/get_map_list.cm"
 BOARD_CODE = "b20210114da9a94d63009f"
@@ -19,23 +19,6 @@ REFERER = "https://lifefourcuts.com/Store01/"
 
 # 페이지당 항목 수. 이보다 적게 오면 마지막 페이지다.
 PAGE_SIZE = 10
-
-
-@dataclass(frozen=True)
-class Store:
-    """지점 하나.
-
-    idx는 사이트가 부여한 식별자다. 수집 대상 필드는 아니지만 페이지 경계에서
-    중복을 걸러내고 종료를 판정하는 데 쓰인다.
-    """
-
-    idx: str
-    name: str
-    address: str | None
-    phone: str | None
-    longitude: float | None
-    latitude: float | None
-    platform: Platform = Platform.LIFE_FOUR_CUT
 
 
 def _text(node: Any) -> str | None:
@@ -97,7 +80,7 @@ def fetch_store_page(page: int, *, timeout: float = 20.0) -> str:
     return response.text
 
 
-def extract_stores(html: str) -> tuple[list[Store], list[str]]:
+def extract_stores(html: str) -> tuple[list[CollectedStore], list[str]]:
     """HTML 조각에서 지점을 추출한다. Prefect에 의존하지 않는 순수 함수다.
 
     지점명이 없는 항목은 건너뛰고 그 id를 함께 돌려준다. 나머지 필드는 없으면
@@ -105,7 +88,7 @@ def extract_stores(html: str) -> tuple[list[Store], list[str]]:
     """
     soup = BeautifulSoup(html, "lxml")
 
-    stores: list[Store] = []
+    stores: list[CollectedStore] = []
     skipped: list[str] = []
 
     for container in soup.select("div.map_container[id^='list_']"):
@@ -117,7 +100,8 @@ def extract_stores(html: str) -> tuple[list[Store], list[str]]:
             continue
 
         stores.append(
-            Store(
+            CollectedStore(
+                platform=Platform.LIFE_FOUR_CUT,
                 idx=idx,
                 name=name,
                 # 사이트가 address를 adress로 표기한다. 오타지만 그대로 맞춰야 한다.
@@ -132,7 +116,7 @@ def extract_stores(html: str) -> tuple[list[Store], list[str]]:
 
 
 @task
-def parse_stores(html: str) -> list[Store]:
+def parse_stores(html: str) -> list[CollectedStore]:
     """extract_stores를 감싸고 건너뛴 항목을 남긴다."""
     stores, skipped = extract_stores(html)
 

@@ -16,6 +16,8 @@ flows/
     flow.py               @flow
     orders.py             @task
   common/                 여러 워크플로가 함께 쓰는 task
+aws/config                로컬 개발용 AWS 프로파일
+compose.yaml              로컬 S3 (LocalStack)
 serve.py                  로컬 개발용 - 한 프로세스로 서빙
 deploy.py                 운영 배포용 - work pool에 스케줄 등록
 ```
@@ -40,6 +42,54 @@ UI나 cron이 워크플로를 직접 실행하지는 않습니다. flow run 레�
 
 따라서 실행 프로세스가 없으면 run이 `SCHEDULED`에 쌓이기만 하고, 버튼을 눌러도
 폴링 주기만큼(기본 10초) 지연이 생깁니다.
+
+## 수집 파이프라인
+
+지점 수집은 collect, enrich, index 세 단계로 나뉩니다. 각 단계는 S3에 결과를
+남기고 다음 단계는 그 결과만 읽습니다.
+
+```text
+[사이트]  ->  collect  ->  enrich  ->  index
+                 |           |          |
+              원본 그대로  외부 보강   색인 가공
+```
+
+경계를 가르는 기준은 두 가지입니다.
+
+- 다시 돌리려면 사이트를 또 긁어야 하나. 아니면 collect 바깥임
+- 값이 틀렸을 때 누구 잘못인가. 사이트면 collect, Kakao면 enrich, 우리 규칙이면 index
+
+**collect는 사이트가 준 것만 담습니다.** 파싱은 하되 해석하지 않습니다. 주소가
+도로명인지 지번인지 판정하지 않고 상호명이나 층수도 떼지 않습니다. 실제로 수집한
+주소는 `경남 통영시 광도면 죽림리 1569-39 1층 102호 플랜비스튜디오 통영점`처럼
+한 브랜드 안에서도 도로명과 지번이 섞여 있는데, 이 상태 그대로 둡니다.
+
+이렇게 나누면 단계마다 따로 재실행할 수 있습니다. enrich는 외부 API라 느리고
+쿼터가 있고 실패하는 반면 index는 순수 함수라 빠릅니다. 두 단계를 붙여두면 색인
+규칙 하나 바꿀 때마다 외부 API를 전량 다시 호출하게 됩니다. 대신 단계 사이에
+S3를 거치므로 한 번에 끝나지 않고 스케줄을 나눠야 하는 트레이드 오프가 있습니다.
+
+### S3 레이아웃
+
+```text
+s3://<bucket>/
+  raw/     platform=LIFE_FOUR_CUT/dt=2026-08-02/page-001.html.gz
+  collect/ platform=LIFE_FOUR_CUT/dt=2026-08-02/stores.jsonl.gz
+                                              /_manifest.json
+```
+
+- `dt=` : Hive 파티션. 이후 Glue나 Athena를 그대로 붙일 수 있음
+- 포맷 : JSONL + gzip. 스키마가 아직 흔들려 Parquet은 이른 단계임
+- `_manifest.json` : `count`, `collected_at`, `flow_run_id`. 부분 실패한 파티션을
+  정상으로 오해하지 않기 위함임
+- `raw/` : 응답 원문. 파싱이 조용히 깨졌을 때 사이트를 다시 긁지 않고 파서만
+  고쳐 재생성하기 위함임. 보존은 S3 lifecycle에 맡김
+
+같은 날 다시 실행하면 같은 키를 덮어씁니다. 단일 객체 PUT은 원자적이라 안전하고,
+이렇게 해야 재실행이 멱등해집니다.
+
+파티션 날짜는 KST 기준입니다. 새벽 3시 실행을 UTC로 끊으면 전날 파티션에 들어가
+운영자가 보는 날짜와 어긋나기 때문입니다.
 
 ## 네이밍 규약
 
@@ -123,6 +173,10 @@ make
   photosignature  포토시그니처 지점을 수집한다
   planbstudio     플랜비스튜디오 지점을 수집한다
   picdot          픽닷 지점을 수집한다 (KAKAO_API_KEY 필요)
+  localstack      로컬 S3(LocalStack)를 띄운다
+  localstack-down 로컬 S3를 내린다
+  s3-init         로컬 버킷을 만든다
+  s3-ls           적재된 키를 나열한다
   serve           로컬 개발용으로 deployment를 서빙한다
   server          Prefect 서버를 띄운다
   deploy          work pool에 스케줄을 등록한다
@@ -144,6 +198,42 @@ make setup
 **`uv.lock`은 반드시 커밋된 것을 그대로 씁니다.** 지우고 다시 만들면 팀원마다 다른
 버전이 설치되어 로컬에서만 재현되는 문제가 생깁니다.
 
+환경변수는 `.env.example`을 복사해서 채웁니다.
+
+```bash
+cp .env.example .env
+```
+
+### 로컬 S3
+
+수집 결과를 적재하려면 S3가 필요합니다. 로컬은 LocalStack을 씁니다.
+
+```bash
+make localstack
+```
+
+`docker compose up`으로 컨테이너를 띄우고 버킷까지 만듭니다. 적재된 내용은
+`make s3-ls`로 확인하고, 다 쓰면 `make localstack-down`으로 내립니다. 컨테이너를
+내리면 버킷 내용도 사라집니다. LocalStack 커뮤니티 판은 상태를 보존하지 않기
+때문인데, `make localstack`이 버킷을 다시 만들어주므로 재생성 비용은 없습니다.
+
+**로컬과 운영의 차이는 AWS 프로파일 하나입니다.** 코드는 endpoint를 모릅니다.
+
+- `neki-local` : `aws/config`에 있음. `endpoint_url`이 LocalStack을 가리킴
+- `neki-prod` : 실제 S3. 자격증명은 worker의 IAM role에서 옴
+
+```text
+AWS_PROFILE=neki-local   ->  http://localhost:4566
+AWS_PROFILE=neki-prod    ->  https://s3.ap-northeast-2.amazonaws.com
+```
+
+`aws/config`에 있는 키는 LocalStack이 검증하지 않는 더미라 커밋되어 있습니다.
+실제 자격증명은 이 파일에 두지 않습니다.
+
+LocalStack 표준 포트는 4566입니다. 다른 프로젝트가 이미 쓰고 있다면 `.env`의
+`LOCALSTACK_PORT`와 `AWS_ENDPOINT_URL`을 같이 옮깁니다. `AWS_ENDPOINT_URL`은
+프로파일의 `endpoint_url`보다 우선합니다.
+
 ### 워크플로 실행
 
 서버 없이 flow만 돌려볼 때 씁니다.
@@ -160,13 +250,16 @@ make picdot
 `make`가 알아서 읽습니다. `uv run`은 `.env`를 자동으로 읽지 않으므로, Makefile을 거치지
 않고 직접 실행할 때는 `uv run --env-file .env ...`로 지정해야 합니다.
 
-```bash
-# .env
-KAKAO_API_KEY=발급받은_REST_API_키
-```
-
 Kakao Developers에서 앱을 만들고 `앱` > `플랫폼 키` > **REST API 키**를 씁니다.
 서버 호출용이라 플랫폼 등록이나 비즈 앱 전환은 필요 없습니다.
+
+네 워크플로 모두 수집 결과를 S3에 적재하므로 `make localstack`이 먼저 떠 있어야
+합니다. 적재 없이 파싱만 확인하려면 `persist`를 끕니다.
+
+```bash
+uv run --env-file .env python -c \
+  "from flows.picdot_stores import picdot_stores; picdot_stores(persist=False)"
+```
 
 `make check`는 임포트와 deployment 수집만 확인합니다. 구조를 바꾼 뒤 회귀를 빠르게
 잡을 때 유용합니다.

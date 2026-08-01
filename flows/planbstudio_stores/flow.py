@@ -5,8 +5,10 @@ import time
 from prefect import flow, get_run_logger
 
 from flows.common.output import log_stores
+from flows.common.platform import Platform
+from flows.common.storage import put_raw, put_stores
+from flows.common.store import CollectedStore
 from flows.planbstudio_stores.stores import (
-    Store,
     fetch_store_page,
     parse_coordinates,
     parse_stores,
@@ -20,7 +22,8 @@ MAX_PAGES = 60
 def planbstudio_stores(
     max_pages: int = MAX_PAGES,
     delay_seconds: float = 0.5,
-) -> list[Store]:
+    persist: bool = True,
+) -> list[CollectedStore]:
     """목록을 순회하며 지점을 모으고 좌표를 채운다.
 
     좌표는 지도 스크립트에 있고 페이지를 바꿔도 내용이 같다. 그래서 첫
@@ -28,17 +31,21 @@ def planbstudio_stores(
 
     목록은 범위를 벗어나면 빈 응답을 준다. 인생네컷처럼 마지막 페이지를
     되돌려주지 않으므로 빈 응답으로 종료를 판정한다.
+
+    persist를 끄면 S3에 적재하지 않는다. 파싱만 확인할 때 쓴다.
     """
     logger = get_run_logger()
 
-    collected: dict[str, Store] = {}
+    collected: dict[str, CollectedStore] = {}
     coordinates: dict[str, tuple[float, float]] = {}
+    pages: list[tuple[int, str]] = []
 
     for page in range(1, max_pages + 1):
         if page > 1 and delay_seconds > 0:
             time.sleep(delay_seconds)
 
         html = fetch_store_page(page)
+        pages.append((page, html))
 
         if page == 1:
             coordinates = parse_coordinates(html)
@@ -60,6 +67,15 @@ def planbstudio_stores(
 
     stores = list(collected.values())
     log_stores(stores, label="플랜비스튜디오")
+
+    if persist:
+        for number, html in pages:
+            put_raw(
+                html,
+                platform=Platform.PLANB_STUDIO,
+                name=f"page-{number:03d}.html",
+            )
+        put_stores(stores, platform=Platform.PLANB_STUDIO)
 
     located = sum(1 for store in stores if store.latitude is not None)
     logger.info("수집 완료: 지점 %d건 (좌표 있음 %d건)", len(stores), located)

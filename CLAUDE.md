@@ -16,6 +16,10 @@ flows/
     flow.py               @flow
     orders.py             @task
   common/                 여러 워크플로가 함께 쓰는 task
+    store.py              수집 공통 스키마 (CollectedStore)
+    storage.py            S3 적재
+aws/config                로컬 개발용 AWS 프로파일
+compose.yaml              로컬 S3 (LocalStack)
 ```
 
 의존은 `deployments -> flows` 단방향입니다. `flows/`가 스케줄을 알면 안 됩니다.
@@ -54,6 +58,49 @@ UI나 cron이 워크플로를 직접 실행하지 않습니다. flow run 레코�
 
 **UI에서 실행하려면 deployment 등록과 실행 프로세스가 둘 다 필요합니다.** 하나만
 있으면 UI에 보이지만 눌러도 진행되지 않거나, 아예 목록에 뜨지 않습니다.
+
+## 수집 파이프라인의 경계
+
+지점 수집은 collect, enrich, index 세 단계입니다. 단계를 섞으면 재실행 단위가
+무너지므로 어디에 코드를 둘지 헷갈릴 때는 두 질문으로 가릅니다.
+
+- 다시 돌리려면 사이트를 또 긁어야 하나. 아니면 collect 바깥임
+- 값이 틀렸을 때 누구 잘못인가. 사이트면 collect, Kakao면 enrich, 우리 규칙이면 index
+
+**collect에서 주소를 해석하지 않습니다.** 도로명인지 지번인지 판정하거나 상호명,
+층수를 떼는 것은 전부 enrich의 일입니다. 픽닷은 수집원이 Kakao라 지번 주소를
+공짜로 받을 수 있지만 담지 않습니다. 다른 브랜드에 없는 값을 담으면 collect
+출력이 브랜드마다 달라지고, 그러면 enrich가 4개를 한 번에 받지 못합니다.
+
+외부 API 의존은 enrich에 모읍니다. 수집 flow는 `KAKAO_API_KEY` 없이도 동작해야
+합니다. 지오코딩을 수집 flow에 붙이면 Kakao 장애가 수집 실패가 되고, 색인 규칙을
+고칠 때마다 크롤링이 따라 돕니다.
+
+### 공통 스키마
+
+브랜드별 `Store` dataclass를 두지 않습니다. `flows/common/store.py`의
+`CollectedStore` 하나를 4개 브랜드가 공유하고, 사이트가 주지 않는 필드는 `None`으로
+둡니다. 브랜드마다 모양이 다르면 enrich가 공통으로 받을 수 없습니다.
+
+`collected_at`은 `CollectedStore`에 없습니다. 사이트가 준 값이 아니라 우리가 언제
+받았는지이므로 적재 시점에 `storage`가 붙입니다.
+
+### S3 적재
+
+```text
+raw/     platform=<브랜드>/dt=<날짜>/<이름>.gz
+collect/ platform=<브랜드>/dt=<날짜>/stores.jsonl.gz
+                                   /_manifest.json
+```
+
+- 파티션 날짜는 KST임. UTC로 끊으면 새벽 실행이 전날 파티션에 들어감
+- 같은 날 재실행은 같은 키를 덮어씀. 단일 객체 PUT은 원자적이라 멱등함
+- `_manifest.json`을 본문보다 **나중에** 올림. 순서가 뒤집히면 manifest만 있고
+  데이터가 없는 창이 생김
+- `read_stores`가 manifest의 `count`와 실제 줄 수를 대조함. 다르면 예외임
+
+`boto3.Session().client("s3")`에 `endpoint_url`을 넘기지 않습니다. 로컬과 운영의
+차이는 `AWS_PROFILE` 하나여야 합니다. 코드에 분기를 넣으면 이 성질이 깨집니다.
 
 ## build() 규약
 
@@ -186,14 +233,28 @@ Prefect 3.8 기준입니다.
 make check
 ```
 
-flow 로직만 바꿨다면 단독 실행으로 충분합니다.
+flow 로직만 바꿨다면 단독 실행으로 충분합니다. 수집 flow는 S3에 적재하므로
+LocalStack이 먼저 떠 있어야 합니다.
 
 ```bash
+make localstack
 make hello
 make lifefourcuts
 make photosignature
 make planbstudio
 make picdot
+make s3-ls
+```
+
+적재를 건드렸다면 실행 결과가 아니라 적재물을 봐야 합니다. `make s3-ls`로 키가
+빠짐없이 올라갔는지 보고, 같은 flow를 두 번 돌려 키 수가 늘지 않는지 확인합니다.
+늘어난다면 파티션 경로에 실행마다 바뀌는 값이 섞인 것입니다.
+
+파싱만 확인하고 싶으면 적재를 끕니다.
+
+```bash
+uv run --env-file .env python -c \
+  "from flows.picdot_stores import picdot_stores; picdot_stores(persist=False)"
 ```
 
 `pyproject.toml`의 `packages`를 건드렸다면 wheel 내용을 확인합니다.
