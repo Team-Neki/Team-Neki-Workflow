@@ -1,0 +1,22 @@
+# 로컬 개발용 S3. 운영은 실제 S3를 쓰므로 이 파일은 로컬에서만 쓴다.
+#
+# 컨테이너를 내리면 버킷도 사라진다. LocalStack 커뮤니티 판은 상태를 보존하지
+# 않는다. 버킷 생성은 make s3-init 이 맡으므로 재생성 비용은 없다.
+#
+# 4566 은 LocalStack 표준 포트다. 다른 프로젝트가 이미 쓰고 있다면
+# LOCALSTACK_PORT 로 옮기고 .env 의 AWS_ENDPOINT_URL 도 같이 맞춘다.
+
+services:
+  localstack:
+    image: localstack/localstack:latest
+    container_name: neki-localstack
+    ports:
+      - "${LOCALSTACK_PORT:-4566}:4566"
+    environment:
+      # S3만 띄운다. 나머지를 켜면 기동이 느려진다.
+      SERVICES: s3
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:4566/_localstack/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 12

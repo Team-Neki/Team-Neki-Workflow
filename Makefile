@@ -21,7 +21,8 @@ endif
 PREFECT_ENV = PREFECT_API_URL=$(API_URL)
 
 .DEFAULT_GOAL := help
-.PHONY: help setup check hello lifefourcuts photosignature planbstudio picdot serve server deploy build clean
+.PHONY: help setup check hello lifefourcuts photosignature planbstudio picdot \
+	localstack localstack-down s3-init s3-ls serve server deploy build clean
 
 help: ## 명령 목록을 출력한다
 	@echo "사용법: make <명령>"
@@ -68,6 +69,35 @@ picdot: ## 픽닷 지점을 수집한다 (KAKAO_API_KEY 필요)
 	from flows.picdot_stores import picdot_stores; \
 	stores = picdot_stores(); \
 	print('수집', len(stores), '건')"
+
+# docker compose 는 .env 를 알아서 읽으므로 LOCALSTACK_PORT 가 그대로 먹는다.
+localstack: ## 로컬 S3(LocalStack)를 띄운다
+	docker compose up -d --wait
+	@$(MAKE) --no-print-directory s3-init
+
+localstack-down: ## 로컬 S3를 내린다 (버킷 내용도 사라진다)
+	docker compose down
+
+s3-init: ## 로컬 버킷을 만든다 (이미 있으면 넘어간다)
+	@$(UV) run python -c "\
+	import os, boto3; \
+	s3 = boto3.Session().client('s3'); \
+	bucket = os.environ['S3_BUCKET']; \
+	names = {b['Name'] for b in s3.list_buckets()['Buckets']}; \
+	print('버킷', bucket, '이미 있음') if bucket in names else ( \
+		s3.create_bucket(Bucket=bucket, CreateBucketConfiguration={ \
+			'LocationConstraint': s3.meta.region_name}), \
+		print('버킷', bucket, '생성'))"
+
+s3-ls: ## 적재된 키를 나열한다
+	@$(UV) run python -c "\
+	import os, boto3; \
+	s3 = boto3.Session().client('s3'); \
+	bucket = os.environ['S3_BUCKET']; \
+	pages = s3.get_paginator('list_objects_v2').paginate(Bucket=bucket); \
+	keys = sorted(o['Key'] for p in pages for o in p.get('Contents', [])); \
+	print('s3://' + bucket, len(keys), '개'); \
+	[print('  ', k) for k in keys]"
 
 serve: ## 로컬 개발용으로 deployment를 서빙한다 (server가 먼저 떠 있어야 함)
 	$(PREFECT_ENV) $(UV) run python serve.py

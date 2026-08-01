@@ -1,0 +1,19 @@
+# 로컬 개발용 AWS 프로파일. 실제 자격증명은 이 파일에 두지 않는다.
+#
+# endpoint_url 을 프로파일에 두면 코드가 LocalStack 을 몰라도 된다. boto3 는
+# 언제나 기본 자격증명 체인만 쓰고, 로컬과 운영의 차이는 프로파일 교체로 끝난다.
+# 코드에 if 로 분기를 넣지 않기 위한 선택이다.
+#
+# 이 파일은 AWS_CONFIG_FILE 로 지정할 때만 쓰인다. .env.example 을 참고한다.
+# 경로가 상대경로이므로 저장소 루트에서 실행해야 한다.
+
+[profile neki-local]
+region = ap-northeast-2
+endpoint_url = http://localhost:4566
+# LocalStack 은 키를 검증하지 않는다. 실제 자격증명이 아니므로 커밋해도 된다.
+aws_access_key_id = test
+aws_secret_access_key = test
+
+# 운영. 자격증명은 worker 의 IAM role 에서 온다. 여기에 키를 적지 않는다.
+[profile neki-prod]
+region = ap-northeast-2
