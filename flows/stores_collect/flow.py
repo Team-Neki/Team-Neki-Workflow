@@ -8,12 +8,13 @@
 """
 
 from concurrent.futures import ThreadPoolExecutor
+from datetime import date
 from typing import Any, Callable
 
 from prefect import flow, get_run_logger
 
 from flows.common.platform import Platform
-from flows.common.storage import put_run_manifest
+from flows.common.storage import latest_dt, put_run_manifest, read_manifest, today
 from flows.lifefourcuts_stores import lifefourcuts_stores
 from flows.monomansion_stores import monomansion_stores
 from flows.photosignature_stores import photosignature_stores
@@ -28,11 +29,77 @@ BRANDS: dict[Platform, Callable[..., list[Any]]] = {
     Platform.MONO_MANSION: monomansion_stores,
 }
 
+# 이보다 오래된 데이터로는 대신하지 않는다. 무한정 대신하면 파서가 깨진 채로
+# 몇 주가 지나도 아무도 눈치채지 못한다. best effort 가 고장을 감추는 장치가
+# 되면 안 된다.
+MAX_STALE_DAYS = 7
+
+
+def _fill_from_previous(
+    results: dict[str, dict[str, Any]], *, dt: date, max_stale_days: int
+) -> None:
+    """실패한 브랜드를 이전 파티션으로 대신한다.
+
+    이전 데이터를 오늘 파티션에 복사하지 않는다. 오늘 수집한 적 없는 것이 오늘
+    것처럼 보이면 collect 계층이 거짓말을 하게 되고, 며칠이 지나도 신선도를
+    알 수 없다. 대신 manifest 가 브랜드마다 어느 파티션을 읽을지 가리킨다.
+    """
+    logger = get_run_logger()
+
+    for name, result in results.items():
+        if result["status"] == "ok":
+            result["source_dt"] = f"{dt:%Y-%m-%d}"
+            result["age_days"] = 0
+            continue
+
+        previous = latest_dt(Platform(name))
+        if previous is None:
+            logger.error("%s: 대신할 이전 파티션이 없습니다.", name)
+            continue
+
+        age = (dt - previous).days
+
+        if age == 0:
+            # 오늘 파티션이 이미 있다. 앞선 실행이 성공했거나 단독 실행으로
+            # 채워둔 경우다. 이번 시도는 실패했어도 데이터는 오늘 것이므로
+            # 오래된 것으로 표시하지 않는다.
+            result["status"] = "ok"
+            result["source_dt"] = f"{previous:%Y-%m-%d}"
+            result["age_days"] = 0
+            result["count"] = read_manifest(Platform(name), previous).get("count")
+            logger.info("%s: 이번 시도는 실패했으나 오늘 파티션이 이미 있습니다.", name)
+            continue
+
+        if age > max_stale_days:
+            logger.error(
+                "%s: 가장 최근 파티션이 %s로 %d일 지나 쓰지 않습니다.",
+                name,
+                previous,
+                age,
+            )
+            result["stale_dt"] = f"{previous:%Y-%m-%d}"
+            result["age_days"] = age
+            continue
+
+        result["status"] = "stale"
+        result["source_dt"] = f"{previous:%Y-%m-%d}"
+        result["age_days"] = age
+        result["count"] = read_manifest(Platform(name), previous).get("count")
+
+        logger.warning(
+            "%s: 오늘 수집에 실패해 %s 파티션(%d일 전, %s건)으로 대신합니다.",
+            name,
+            previous,
+            age,
+            result["count"],
+        )
+
 
 @flow(name="stores-collect", log_prints=True)
 def stores_collect(
     persist: bool = True,
     only: list[str] | None = None,
+    max_stale_days: int = MAX_STALE_DAYS,
 ) -> dict[str, dict[str, Any]]:
     """브랜드를 병렬로 수집하고 실행 manifest 를 남긴다.
 
@@ -40,8 +107,8 @@ def stores_collect(
     겹쳐 돈다. 사이트 입장에서는 여전히 한 곳당 순차 접근이다.
 
     한 브랜드가 실패해도 나머지는 적재한다. 사이트 하나가 개편돼 파싱이 깨졌을
-    때 나머지까지 멈추는 것은 과하다. 대신 무엇이 빠졌는지를 manifest 에 남겨
-    다음 단계가 알 수 있게 한다.
+    때 나머지까지 멈추는 것은 과하다. 그리고 실패한 브랜드는 이전 파티션으로
+    대신해 다음 단계가 브랜드를 통째로 잃지 않게 한다.
 
     only 에 platform 이름을 주면 그것만 돌린다. 백필에 쓴다.
     """
@@ -78,26 +145,37 @@ def stores_collect(
             results[str(platform)] = {"status": "ok", "count": len(stores)}
             logger.info("%s 수집 %d건", platform, len(stores))
 
-    succeeded = [name for name, r in results.items() if r["status"] == "ok"]
-    failed = [name for name, r in results.items() if r["status"] != "ok"]
+    if persist:
+        _fill_from_previous(results, dt=today(), max_stale_days=max_stale_days)
 
-    if not succeeded:
+    succeeded = [name for name, r in results.items() if r["status"] == "ok"]
+    stale = [name for name, r in results.items() if r["status"] == "stale"]
+    failed = [name for name, r in results.items() if r["status"] == "failed"]
+
+    if not succeeded and not stale:
         raise RuntimeError(
-            f"모든 브랜드가 실패했습니다: {failed}. 다음 단계로 넘길 것이 없습니다."
+            f"쓸 수 있는 브랜드가 없습니다: {failed}. 다음 단계로 넘길 것이 없습니다."
         )
 
     if persist:
         put_run_manifest(results)
 
+    if not succeeded:
+        # 전부 이전 데이터로 버티는 상황이다. 개별 사이트 문제가 아니라 네트워크나
+        # 배포에 문제가 있을 가능성이 높다.
+        logger.error("오늘 새로 수집된 브랜드가 하나도 없습니다.")
+
+    if stale:
+        logger.warning("%d개 브랜드를 이전 파티션으로 대신합니다: %s", len(stale), stale)
+
     if failed:
-        logger.warning(
-            "%d개 브랜드가 빠진 채로 진행합니다: %s", len(failed), failed
-        )
+        logger.error("%d개 브랜드가 빠진 채로 진행합니다: %s", len(failed), failed)
 
     logger.info(
-        "수집 완료: 성공 %d, 실패 %d, 합계 %d건",
+        "수집 완료: 신선 %d, 이전 데이터 %d, 없음 %d, 합계 %d건",
         len(succeeded),
+        len(stale),
         len(failed),
-        sum(r.get("count", 0) for r in results.values()),
+        sum(r.get("count") or 0 for r in results.values()),
     )
     return results

@@ -179,15 +179,22 @@ def put_run_manifest(brands: dict[str, dict[str, Any]], *, dt: date | None = Non
     key = f"{RUNS_PREFIX}/dt={dt:%Y-%m-%d}/{RUN_MANIFEST_NAME}"
 
     succeeded = sorted(k for k, v in brands.items() if v.get("status") == "ok")
-    failed = sorted(k for k, v in brands.items() if v.get("status") != "ok")
+    stale = sorted(k for k, v in brands.items() if v.get("status") == "stale")
+    failed = sorted(k for k, v in brands.items() if v.get("status") == "failed")
 
     manifest = {
         "dt": f"{dt:%Y-%m-%d}",
         "finished_at": datetime.now(KST).isoformat(),
         "flow_run_id": flow_run.id,
         "succeeded": succeeded,
+        # 오늘 수집은 실패했지만 이전 파티션으로 대신하는 브랜드다. 다음 단계는
+        # 이들도 처리하되 데이터가 오래됐음을 알아야 한다.
+        "stale": stale,
+        # 대신할 것조차 없는 브랜드다. 다음 단계가 다룰 수 없다.
         "failed": failed,
-        "total": sum(v.get("count", 0) for v in brands.values()),
+        "total": sum(v.get("count") or 0 for v in brands.values()),
+        # 브랜드마다 어느 파티션을 읽어야 하는지 담는다. 다음 단계는 이것만 보면
+        # 되고 신선한지 여부를 따로 판단할 필요가 없다.
         "brands": brands,
     }
 
@@ -206,6 +213,13 @@ def read_run_manifest(dt: date) -> dict[str, Any]:
     key = f"{RUNS_PREFIX}/dt={dt:%Y-%m-%d}/{RUN_MANIFEST_NAME}"
     body = _client().get_object(Bucket=_bucket(), Key=key)["Body"].read()
     return json.loads(body)
+
+
+def read_manifest(platform: Platform, dt: date) -> dict[str, Any]:
+    """파티션 하나의 manifest 를 읽는다."""
+    base = partition(COLLECT_PREFIX, platform=platform, dt=dt)
+    body = _client().get_object(Bucket=_bucket(), Key=f"{base}/{MANIFEST_NAME}")["Body"]
+    return json.loads(body.read())
 
 
 def latest_dt(platform: Platform) -> date | None:

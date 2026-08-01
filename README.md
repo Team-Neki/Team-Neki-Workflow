@@ -91,10 +91,20 @@ s3://<bucket>/
 않기 때문입니다.
 
 ```json
-{"dt": "2026-08-02", "succeeded": ["MONO_MANSION", "PICDOT", ...],
- "failed": ["LIFE_FOUR_CUT"], "total": 468,
- "brands": {"LIFE_FOUR_CUT": {"status": "failed", "error": "..."}}}
+{"dt": "2026-08-02", "succeeded": ["MONO_MANSION", "PICDOT", "PHOTO_SIGNATURE"],
+ "stale": ["LIFE_FOUR_CUT"], "failed": ["PLANB_STUDIO"], "total": 584,
+ "brands": {
+   "LIFE_FOUR_CUT": {"status": "stale", "source_dt": "2026-08-01", "age_days": 1,
+                     "count": 252, "error": "..."}}}
 ```
+
+수집에 실패한 브랜드는 이전 파티션으로 대신합니다. 사이트 하나가 깨졌다고 색인에서
+브랜드가 통째로 사라지지 않게 하기 위함입니다. 이때 **이전 데이터를 오늘 파티션에
+복사하지 않습니다.** 오늘 수집한 적 없는 것이 오늘 것처럼 보이면 신선도를 알 수
+없게 됩니다. 대신 `source_dt`가 어느 파티션을 읽을지 가리킵니다.
+
+7일이 지난 데이터로는 대신하지 않습니다. 무한정 대신하면 파서가 깨진 채로 몇 주가
+지나도 아무도 눈치채지 못합니다.
 
 `collect/` 안에 두지 않은 이유가 있습니다. 그쪽은 Hive 파티션만 있어야 나중에
 Glue를 그대로 붙일 수 있고, 다른 것이 섞이면 파티션 인식이 깨집니다.
