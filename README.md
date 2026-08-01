@@ -76,6 +76,7 @@ s3://<bucket>/
   raw/     platform=LIFE_FOUR_CUT/dt=2026-08-02/page-001.html.gz
   collect/ platform=LIFE_FOUR_CUT/dt=2026-08-02/stores.jsonl.gz
                                               /_manifest.json
+  runs/    dt=2026-08-02/collect.json
 ```
 
 - `dt=` : Hive 파티션. 이후 Glue나 Athena를 그대로 붙일 수 있음
@@ -84,6 +85,19 @@ s3://<bucket>/
   정상으로 오해하지 않기 위함임
 - `raw/` : 응답 원문. 파싱이 조용히 깨졌을 때 사이트를 다시 긁지 않고 파서만
   고쳐 재생성하기 위함임. 보존은 S3 lifecycle에 맡김
+
+`runs/`는 실행 하나를 설명합니다. 파티션마다 있는 `_manifest.json`으로는 "오늘
+무엇이 빠졌나"에 답할 수 없습니다. 없는 파티션은 없다는 사실 자체가 기록되지
+않기 때문입니다.
+
+```json
+{"dt": "2026-08-02", "succeeded": ["MONO_MANSION", "PICDOT", ...],
+ "failed": ["LIFE_FOUR_CUT"], "total": 468,
+ "brands": {"LIFE_FOUR_CUT": {"status": "failed", "error": "..."}}}
+```
+
+`collect/` 안에 두지 않은 이유가 있습니다. 그쪽은 Hive 파티션만 있어야 나중에
+Glue를 그대로 붙일 수 있고, 다른 것이 섞이면 파티션 인식이 깨집니다.
 
 같은 날 다시 실행하면 같은 키를 덮어씁니다. 단일 객체 PUT은 원자적이라 안전하고,
 이렇게 해야 재실행이 멱등해집니다.
@@ -174,6 +188,7 @@ make
   planbstudio     플랜비스튜디오 지점을 수집한다
   picdot          픽닷 지점을 수집한다 (KAKAO_API_KEY 필요)
   monomansion     모노맨션 지점을 수집한다 (KAKAO_API_KEY 필요)
+  collect         전체 브랜드를 병렬로 수집한다
   localstack      로컬 S3(LocalStack)를 띄운다
   localstack-down 로컬 S3를 내린다
   s3-init         로컬 버킷을 만든다

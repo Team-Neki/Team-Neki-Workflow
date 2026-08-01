@@ -1,4 +1,8 @@
-"""플랜비스튜디오 지점 수집 스케줄 정의."""
+"""플랜비스튜디오 지점 수집 deployment.
+
+스케줄이 없다. 정기 수집은 stores-collect 가 묶어서 돌린다. 이 deployment 는
+백필이나 단일 브랜드 재수집을 UI 에서 실행하기 위해 남겨둔다.
+"""
 
 from prefect.deployments.runner import RunnerDeployment
 
@@ -6,8 +10,4 @@ from flows.planbstudio_stores import planbstudio_stores
 
 
 def build() -> RunnerDeployment:
-    # 다른 브랜드 수집(04:00, 04:30)과 시간을 벌린다.
-    return planbstudio_stores.to_deployment(
-        name="planbstudio-stores",
-        cron="0 5 * * *",
-    )
+    return planbstudio_stores.to_deployment(name="planbstudio-stores")

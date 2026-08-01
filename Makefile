@@ -22,8 +22,8 @@ PREFECT_ENV = PREFECT_API_URL=$(API_URL)
 
 .DEFAULT_GOAL := help
 .PHONY: help setup check hello lifefourcuts photosignature planbstudio picdot \
-	monomansion localstack localstack-down s3-init s3-ls serve server deploy \
-	build clean
+	monomansion collect localstack localstack-down s3-init s3-ls serve server \
+	deploy build clean
 
 help: ## 명령 목록을 출력한다
 	@echo "사용법: make <명령>"
@@ -76,6 +76,13 @@ monomansion: ## 모노맨션 지점을 수집한다 (KAKAO_API_KEY 필요)
 	from flows.monomansion_stores import monomansion_stores; \
 	stores = monomansion_stores(); \
 	print('수집', len(stores), '건')"
+
+collect: ## 전체 브랜드를 병렬로 수집한다 (KAKAO_API_KEY, S3 필요)
+	@$(UV) run python -c "\
+	from flows.stores_collect import stores_collect; \
+	results = stores_collect(); \
+	print('성공', sum(1 for r in results.values() if r['status'] == 'ok'), '건'); \
+	print('합계', sum(r.get('count', 0) for r in results.values()), '건')"
 
 # docker compose 는 .env 를 알아서 읽으므로 LOCALSTACK_PORT 가 그대로 먹는다.
 localstack: ## 로컬 S3(LocalStack)를 띄운다

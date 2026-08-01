@@ -33,8 +33,14 @@ BUCKET_ENV = "S3_BUCKET"
 RAW_PREFIX = "raw"
 COLLECT_PREFIX = "collect"
 
+# 실행 하나를 설명하는 manifest. collect/ 안에 두지 않는다. 그쪽은 Hive 파티션만
+# 있어야 나중에 Glue 를 그대로 붙일 수 있고, 다른 것이 섞이면 파티션 인식이
+# 깨진다.
+RUNS_PREFIX = "runs"
+
 STORES_NAME = "stores.jsonl.gz"
 MANIFEST_NAME = "_manifest.json"
+RUN_MANIFEST_NAME = "collect.json"
 
 # 파티션 날짜는 KST를 쓴다. 새벽 3시 실행을 UTC로 끊으면 전날 파티션에 들어가
 # 운영자가 보는 날짜와 어긋난다.
@@ -156,6 +162,74 @@ def put_raw(
         Bucket=bucket, Key=key, Body=gzip.compress(content.encode("utf-8"))
     )
     return f"s3://{bucket}/{key}"
+
+
+@task(retries=3, retry_delay_seconds=[2, 5, 10])
+def put_run_manifest(brands: dict[str, dict[str, Any]], *, dt: date | None = None) -> str:
+    """수집 실행 하나를 설명하는 manifest 를 남긴다.
+
+    브랜드 하나가 실패해도 나머지는 적재하므로, 다음 단계는 "오늘 무엇이 쓸 수
+    있는가"를 알아야 한다. 파티션마다 있는 _manifest.json 으로는 답할 수 없다.
+    없는 파티션은 없다는 사실 자체가 기록되지 않기 때문이다.
+    """
+    logger = get_run_logger()
+
+    dt = dt or today()
+    bucket = _bucket()
+    key = f"{RUNS_PREFIX}/dt={dt:%Y-%m-%d}/{RUN_MANIFEST_NAME}"
+
+    succeeded = sorted(k for k, v in brands.items() if v.get("status") == "ok")
+    failed = sorted(k for k, v in brands.items() if v.get("status") != "ok")
+
+    manifest = {
+        "dt": f"{dt:%Y-%m-%d}",
+        "finished_at": datetime.now(KST).isoformat(),
+        "flow_run_id": flow_run.id,
+        "succeeded": succeeded,
+        "failed": failed,
+        "total": sum(v.get("count", 0) for v in brands.values()),
+        "brands": brands,
+    }
+
+    _client().put_object(
+        Bucket=bucket,
+        Key=key,
+        Body=json.dumps(manifest, ensure_ascii=False, indent=2).encode("utf-8"),
+    )
+
+    logger.info("s3://%s/%s 기록 (성공 %d, 실패 %d)", bucket, key, len(succeeded), len(failed))
+    return f"s3://{bucket}/{key}"
+
+
+def read_run_manifest(dt: date) -> dict[str, Any]:
+    """수집 실행 manifest 를 읽는다. enrich 가 무엇을 처리할지 여기서 정한다."""
+    key = f"{RUNS_PREFIX}/dt={dt:%Y-%m-%d}/{RUN_MANIFEST_NAME}"
+    body = _client().get_object(Bucket=_bucket(), Key=key)["Body"].read()
+    return json.loads(body)
+
+
+def latest_dt(platform: Platform) -> date | None:
+    """브랜드의 가장 최근 collect 파티션 날짜를 찾는다.
+
+    포인터 객체를 따로 두지 않고 목록을 본다. 포인터는 갱신 시점에 경합이 있고,
+    과거 날짜를 백필하면 최신이 뒤로 밀리는 사고가 난다. 파티션 수가 많지
+    않으므로 목록이 더 안전하다.
+    """
+    prefix = f"{COLLECT_PREFIX}/platform={platform}/"
+
+    pages = _client().get_paginator("list_objects_v2").paginate(
+        Bucket=_bucket(), Prefix=prefix, Delimiter="/"
+    )
+    partitions = [
+        item["Prefix"].removeprefix(f"{prefix}dt=").rstrip("/")
+        for page in pages
+        for item in page.get("CommonPrefixes", [])
+    ]
+
+    if not partitions:
+        return None
+
+    return date.fromisoformat(max(partitions))
 
 
 def read_stores(*, platform: Platform, dt: date) -> list[dict[str, Any]]:
