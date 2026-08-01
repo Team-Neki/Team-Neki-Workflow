@@ -6,6 +6,11 @@ __pycache__/
 build/
 dist/
 
+# 자격증명. 예시 파일(.env.example)만 커밋한다
+.env
+.env.*
+!.env.example
+
 # Prefect
 .prefect/
 prefect.db

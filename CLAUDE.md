@@ -2,24 +2,30 @@
 
 이 문서는 이 저장소에서 코드를 작성할 때 지켜야 할 규약과 빠지기 쉬운 함정을 다룹니다.
 
-## 계층 구조
+## 구조
 
-세 디렉토리는 각각 하나의 질문에만 답합니다.
-
-- `deployments/` : 언제 돌리나 (스케줄)
-- `flows/` : 무엇을 어떤 순서로 (`@flow`)
-- `tasks/` : 실제로 하는 일 (`@task`)
-
-의존은 `deployments -> flows -> tasks` 단방향입니다.
+워크플로 하나가 디렉토리 하나입니다. `@flow`와 `@task`를 같은 디렉토리에 두되
+파일은 나눕니다. 스케줄만 따로 모읍니다.
 
 ```text
-deployments/  ->  flows/  ->  tasks/
-   스케줄          조립         작업
+deployments/              언제 돌리나
+  daily_sync.py           build()
+flows/
+  daily_sync/             무엇을 어떤 순서로 + 실제로 하는 일
+    __init__.py           flow 재노출
+    flow.py               @flow
+    orders.py             @task
+  common/                 여러 워크플로가 함께 쓰는 task
 ```
 
-`tasks/`가 `flows/`를 import하거나 `flows/`가 스케줄을 아는 순간 계층 분리가
-무의미해집니다. 작업 로직이 flow 컨텍스트를 필요로 한다면 대개 인자로 받아야 할
-값을 import로 끌어온 것이므로, 시그니처를 먼저 의심해볼 수 있습니다.
+의존은 `deployments -> flows` 단방향입니다. `flows/`가 스케줄을 알면 안 됩니다.
+
+워크플로 안에서는 `flow.py`가 task 모듈을 import하고 그 반대는 없습니다. task
+모듈이 `flow.py`를 import해야 할 것 같다면 대개 인자로 받아야 할 값을 import로
+끌어온 것이므로, 시그니처를 먼저 의심해볼 수 있습니다.
+
+`__init__.py`는 flow 함수만 재노출합니다. 그래야 `deployments/`가
+`from flows.daily_sync import daily_sync`로 짧게 가져올 수 있습니다.
 
 ## 실행 모델
 
@@ -126,14 +132,22 @@ deployment의 `paused` 대신 스케줄의 `active`를 꺼도 마찬가지로 �
 
 ## 패키지 설정
 
-저장소는 editable로 설치해야 합니다. 설치하지 않으면 `flows`, `tasks` import가
-실행 위치(CWD)에 의존하게 되어 worker를 다른 경로에서 띄울 때 깨집니다.
+저장소는 editable로 설치해야 합니다. 설치하지 않으면 `flows` import가 실행
+위치(CWD)에 의존하게 되어 worker를 다른 경로에서 띄울 때 깨집니다.
 
 ```bash
-uv pip install -e . --python .venv/bin/python
+make setup
 ```
 
-- venv는 uv로 관리하며 `pip` 실행 파일이 없음. `uv pip`를 사용함
+- 명령은 `make`를 거치며 내부적으로 `uv run`을 씀. venv를 활성화하지 않음
+- `uv run`은 `.venv`가 없으면 만들고 `uv.lock`에 맞춰 채운 뒤 실행함
+- `uv.lock`은 커밋된 것을 그대로 씀. 지우고 다시 만들면 팀원 간 버전이 갈림
+- venv에 `pip` 실행 파일이 없음. 직접 다뤄야 한다면 `uv pip`를 사용함
+
+`uv run`은 `.env`를 자동으로 읽지 않습니다. Makefile이 `.env`가 있을 때만
+`UV_ENV_FILE`을 지정해 이를 대신합니다. Makefile을 거치지 않고 실행할 때는
+`uv run --env-file .env`로 직접 지정해야 하며, 그러지 않으면 API 키를 쓰는
+워크플로가 키 없음 오류로 실패합니다.
 
 최상위 패키지를 새로 추가하면 `pyproject.toml`의
 `[tool.hatch.build.targets.wheel] packages`에 반드시 등록해야 합니다. 등록을
@@ -166,20 +180,36 @@ Prefect 3.8 기준입니다.
 
 ## 변경 검증
 
+구조를 바꿨다면 임포트와 deployment 수집부터 확인합니다.
+
+```bash
+make check
+```
+
 flow 로직만 바꿨다면 단독 실행으로 충분합니다.
 
 ```bash
-.venv/bin/python -c "from flows.hello import hello; hello()"
+make hello
+make lifefourcuts
+make photosignature
+make planbstudio
+make picdot
+```
+
+`pyproject.toml`의 `packages`를 건드렸다면 wheel 내용을 확인합니다.
+
+```bash
+make build
 ```
 
 `deploy.py`나 `deployments/`를 건드렸다면 로컬 서버를 띄워 배포 사이클을 확인해야
 합니다. 실제 스케줄을 다루는 코드라 import 성공만으로는 회귀를 잡을 수 없습니다.
 
 ```bash
-PREFECT_HOME=/tmp/pf-test prefect server start --host 127.0.0.1 --port 4301
+PREFECT_HOME=/tmp/pf-test uv run prefect server start --host 127.0.0.1 --port 4301
 export PREFECT_API_URL=http://127.0.0.1:4301/api
-prefect work-pool create neki-pool --type process
-PREFECT_WORK_POOL=neki-pool python deploy.py
+uv run prefect work-pool create neki-pool --type process
+make deploy PORT=4301
 ```
 
 검증에는 `PREFECT_HOME`을 임시 경로로 지정해 격리해야 합니다. 지정하지 않으면
@@ -196,10 +226,11 @@ pause 관련 코드를 고쳤다면 양방향을 모두 확인해야 합니다. 
 **UI로 접근할 수 없습니다.** UI를 보려면 서버를 따로 띄우고 API 주소를 지정해야
 합니다.
 
+터미널 두 개가 필요합니다. `make serve`가 `PREFECT_API_URL`을 대신 넣어줍니다.
+
 ```bash
-prefect server start --host 127.0.0.1 --port 4200
-export PREFECT_API_URL=http://127.0.0.1:4200/api
-python serve.py
+make server
+make serve
 ```
 
 UI는 `http://127.0.0.1:4200`이고, deployment 목록은 `/deployments`입니다.
