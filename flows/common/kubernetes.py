@@ -17,6 +17,8 @@ from kubernetes import client, config
 from kubernetes.client.rest import ApiException
 from prefect import get_run_logger, task
 
+from flows.common import registry
+
 NAMESPACE_ENV = "K8S_NAMESPACE"
 DEFAULT_NAMESPACE = "default"
 
@@ -62,6 +64,9 @@ def _manifest(
     container = client.V1Container(
         name="batch",
         image=image,
+        # 다이제스트는 불변이므로 캐시를 믿어도 된다. 태그를 그대로 쓰는
+        # 경우에만 매번 받아야 최신이 보장된다.
+        image_pull_policy="IfNotPresent" if "@sha256:" in image else "Always",
         args=args,
         env=[client.V1EnvVar(name=k, value=v) for k, v in (env or {}).items()],
         env_from=[
@@ -161,14 +166,25 @@ def run_job(
     secrets: list[str] | None = None,
     service_account: str | None = None,
     resources: dict[str, dict[str, str]] | None = None,
+    pin_digest: bool = True,
     timeout_seconds: float = 3600.0,
 ) -> str:
     """Job을 만들어 끝날 때까지 지켜본다. 실패하면 예외를 낸다.
 
     Job은 성공하든 실패하든 지운다. 로그는 이미 Prefect로 옮겨왔으므로 남겨둘
     이유가 없고, 남기면 다음 실행 때 이름만 다른 Job이 쌓인다.
+
+    pin_digest를 켜두면 태그가 지금 가리키는 다이제스트를 조회해 그것으로
+    실행한다. 최신을 쓰면서 무엇이 돌았는지가 이력에 남는다. 레지스트리를
+    부를 수 없는 환경에서만 끈다.
     """
     logger = get_run_logger()
+
+    if pin_digest:
+        resolved = registry.resolve(image)
+        if resolved != image:
+            logger.info("이미지 고정: %s -> %s", image, resolved)
+        image = resolved
 
     _load_config()
     batch = client.BatchV1Api()

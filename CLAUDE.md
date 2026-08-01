@@ -142,6 +142,29 @@ Job spec에서 놓치기 쉬운 것들입니다.
 get/list/watch, `pods/log`의 get이면 충분합니다. pod 삭제 권한은 필요 없습니다.
 Job을 지우면 ownerReference를 따라 정리됩니다.
 
+### 최신 이미지와 재현성을 같이 얻는다
+
+`:latest`를 그대로 넘기면 최신은 쓰지만 무엇이 돌았는지 모릅니다. 실패한 실행을
+재현할 수 없고, 재시도 중간에 이미지가 바뀔 수 있으며, 노드마다 캐시가 달라
+같은 태그가 다른 것을 가리킬 수 있습니다. 반대로 태그를 고정하면 새 배포가
+반영되지 않습니다.
+
+그래서 `flows/common/registry.py`의 `resolve`가 실행 시점에 태그가 지금 가리키는
+다이제스트를 조회하고, `run_job`이 그것으로 실행합니다.
+
+```text
+alpine:3.20  ->  registry-1.docker.io/library/alpine@sha256:d9e853e8...
+```
+
+**태그는 배포 편의를 위해 남기고, 실행은 다이제스트로 합니다.** Spring 쪽은
+`:latest`로 계속 밀어도 되고, 우리는 그때그때 최신을 집으면서 어느 다이제스트가
+돌았는지 로그에 남깁니다. 롤백은 `image` 파라미터에 다이제스트를 직접 주면
+됩니다.
+
+`image_pull_policy`도 여기 맞춥니다. 다이제스트는 불변이라 `IfNotPresent`로
+캐시를 믿어도 되고, 태그를 그대로 쓸 때만 `Always`여야 최신이 보장됩니다.
+`pin_digest=False`는 레지스트리를 부를 수 없는 환경에서만 씁니다.
+
 ## build() 규약
 
 `deployments/` 아래 모든 모듈은 `RunnerDeployment`를 반환하는 `build()`를 노출해야
