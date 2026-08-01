@@ -1,0 +1,58 @@
+# Prefect worker 가 배치 Job 을 다루는 데 필요한 최소 권한.
+#
+#   kubectl apply -f k8s/rbac.yaml
+#
+# worker 를 pod 로 띄운다면 이 ServiceAccount 를 지정한다. 호스트 프로세스로
+# 띄운다면 kubeconfig 가 권한을 주므로 이 파일은 필요 없다.
+#
+# 네임스페이스를 바꾸려면 아래 neki 를 모두 바꾸고 worker 에 K8S_NAMESPACE 를
+# 같은 값으로 넘긴다.
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: neki
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: prefect-worker
+  namespace: neki
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: batch-runner
+  namespace: neki
+rules:
+  # Job 을 만들고 상태를 보고 끝나면 지운다.
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["create", "get", "list", "watch", "delete"]
+  - apiGroups: ["batch"]
+    resources: ["jobs/status"]
+    verbs: ["get"]
+  # 로그를 읽으려면 어느 pod 인지 먼저 찾아야 한다.
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: batch-runner
+  namespace: neki
+subjects:
+  - kind: ServiceAccount
+    name: prefect-worker
+    namespace: neki
+roleRef:
+  kind: Role
+  name: batch-runner
+  apiGroup: rbac.authorization.k8s.io

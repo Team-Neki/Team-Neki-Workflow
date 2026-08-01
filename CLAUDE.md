@@ -115,6 +115,33 @@ collect/ platform=<브랜드>/dt=<날짜>/stores.jsonl.gz
 `boto3.Session().client("s3")`에 `endpoint_url`을 넘기지 않습니다. 로컬과 운영의
 차이는 `AWS_PROFILE` 하나여야 합니다. 코드에 분기를 넣으면 이 성질이 깨집니다.
 
+### 배치 컨테이너 실행
+
+enrich와 index는 Spring Batch로 구현하고 Prefect가 k3s Job으로 띄웁니다. 스케줄과
+순서, 재시도는 이 저장소에 남고 계산만 컨테이너가 합니다.
+
+**Prefect의 Kubernetes work pool을 쓰지 않습니다.** 그것은 flow 자체를 컨테이너로
+돌리는 기능이라 이미지 안에 Prefect와 flow 코드가 있어야 합니다. 우리는 임의의
+Java 이미지를 돌리므로 process work pool에 flow를 두고 `flows/common/kubernetes.py`의
+`run_job`이 Job을 만들어 지켜봅니다.
+
+Job spec에서 놓치기 쉬운 것들입니다.
+
+- `backoff_limit=0` : 재시도는 Prefect가 맡음. k8s가 같이 재시도하면 의미가 겹치고
+  어느 시도의 로그인지 분간이 안 됨
+- 이름은 `generate_name`으로 k8s가 붙임. 직접 지으면 DNS-1123 제약과 중복을 직접
+  다뤄야 함
+- `finally`에서 Job 삭제. 취소했을 때 pod가 남으면 안 됨
+- pod 상태를 먼저 확인함. `ImagePullBackOff`에서 로그를 기다리면 타임아웃까지
+  멈춰 있고 원인이 드러나지 않음
+
+컨테이너 stdout은 Prefect 로그로 옮깁니다. 이게 없으면 UI에는 실패 사실만 남고
+원인은 이미 사라진 pod 안에 있습니다.
+
+권한은 `k8s/rbac.yaml`입니다. Job의 create/get/list/watch/delete, pod의
+get/list/watch, `pods/log`의 get이면 충분합니다. pod 삭제 권한은 필요 없습니다.
+Job을 지우면 ownerReference를 따라 정리됩니다.
+
 ## build() 규약
 
 `deployments/` 아래 모든 모듈은 `RunnerDeployment`를 반환하는 `build()`를 노출해야
