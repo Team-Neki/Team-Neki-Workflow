@@ -165,6 +165,11 @@ alpine:3.20  ->  registry-1.docker.io/library/alpine@sha256:d9e853e8...
 캐시를 믿어도 되고, 태그를 그대로 쓸 때만 `Always`여야 최신이 보장됩니다.
 `pin_digest=False`는 레지스트리를 부를 수 없는 환경에서만 씁니다.
 
+**해석은 flow run 단위로 한 번만 합니다.** task를 재시도할 때마다 다시 해석하면
+그사이 새 이미지가 올라왔을 때 1차 시도와 2차 시도가 다른 코드를 돌게 됩니다.
+한 번의 실행은 하나의 이미지로 끝나야 합니다. `_resolve_once`가 flow run id를
+캐시 키로 써서 이를 보장하며, 다음 flow run은 id가 달라 다시 최신을 집습니다.
+
 ## build() 규약
 
 `deployments/` 아래 모든 모듈은 `RunnerDeployment`를 반환하는 `build()`를 노출해야

@@ -11,11 +11,13 @@ Job을 만들어 지켜본다.
 
 import os
 import time
+from functools import lru_cache
 from typing import Any
 
 from kubernetes import client, config
 from kubernetes.client.rest import ApiException
 from prefect import get_run_logger, task
+from prefect.runtime import flow_run
 
 from flows.common import registry
 
@@ -33,6 +35,26 @@ FATAL_WAITING = {
     "CreateContainerConfigError",
     "CreateContainerError",
 }
+
+
+@lru_cache(maxsize=128)
+def _resolve_once(run_id: str, image: str) -> str:
+    """flow run 하나 안에서는 같은 이미지를 쓴다.
+
+    run_id는 캐시 키로만 쓰인다. 이게 없으면 task를 재시도할 때마다 태그를 다시
+    해석하게 되고, 그 사이 새 이미지가 올라왔다면 1차 시도와 2차 시도가 다른
+    코드를 돌게 된다. 한 번의 실행은 하나의 이미지로 끝나야 한다.
+
+    다음 flow run은 run_id가 다르므로 그때 다시 최신을 집는다.
+    """
+    return registry.resolve(image)
+
+
+def _pin(image: str) -> str:
+    run_id = flow_run.id
+    # flow run 밖에서 부른 경우다. 캐시하면 프로세스가 사는 동안 낡은 값이
+    # 남으므로 그때그때 해석한다.
+    return _resolve_once(run_id, image) if run_id else registry.resolve(image)
 
 
 def _load_config() -> None:
@@ -175,13 +197,14 @@ def run_job(
     이유가 없고, 남기면 다음 실행 때 이름만 다른 Job이 쌓인다.
 
     pin_digest를 켜두면 태그가 지금 가리키는 다이제스트를 조회해 그것으로
-    실행한다. 최신을 쓰면서 무엇이 돌았는지가 이력에 남는다. 레지스트리를
-    부를 수 없는 환경에서만 끈다.
+    실행한다. 최신을 쓰면서 무엇이 돌았는지가 이력에 남는다. 해석 결과는 flow
+    run 단위로 재사용하므로 재시도해도 같은 이미지가 돈다. 레지스트리를 부를
+    수 없는 환경에서만 끈다.
     """
     logger = get_run_logger()
 
     if pin_digest:
-        resolved = registry.resolve(image)
+        resolved = _pin(image)
         if resolved != image:
             logger.info("이미지 고정: %s -> %s", image, resolved)
         image = resolved
