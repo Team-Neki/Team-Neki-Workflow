@@ -2,7 +2,7 @@
 
 from prefect import flow, get_run_logger, unmapped
 
-from tasks.hello.greeting import fetch_names, greet
+from flows.hello.greeting import fetch_names, greet
 
 
 @flow(name="hello", log_prints=True)
