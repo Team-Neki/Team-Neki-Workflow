@@ -4,12 +4,13 @@ import json
 
 from prefect import flow, get_run_logger
 
-from flows.common.kakao import search_all
+from flows.common.kakao import parse_stores, search_all
 from flows.common.output import log_stores
 from flows.common.platform import Platform
 from flows.common.storage import put_raw, put_stores
 from flows.common.store import CollectedStore
-from flows.monomansion_stores.stores import QUERY, parse_stores
+
+QUERY = "모노맨션"
 
 
 @flow(name="monomansion-stores", log_prints=True)
@@ -27,7 +28,7 @@ def monomansion_stores(
     logger = get_run_logger()
 
     documents, expected = search_all(query)
-    stores = parse_stores(documents)
+    stores = parse_stores(documents, platform=Platform.MONO_MANSION)
 
     if not stores:
         raise ValueError(

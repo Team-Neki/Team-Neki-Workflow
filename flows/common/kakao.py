@@ -15,6 +15,9 @@ from typing import Any
 import httpx
 from prefect import get_run_logger, task
 
+from flows.common.platform import Platform
+from flows.common.store import CollectedStore
+
 SEARCH_URL = "https://dapi.kakao.com/v2/local/search/keyword.json"
 
 API_KEY_ENV = "KAKAO_API_KEY"
@@ -146,3 +149,62 @@ def search_all(query: str, *, rect: Rect = KOREA) -> tuple[list[dict[str, Any]],
         )
 
     return list(found.values()), expected
+
+
+def _coordinate(value: str | None) -> float | None:
+    if not value:
+        return None
+    try:
+        return float(value)
+    except ValueError:
+        return None
+
+
+def to_store(
+    document: dict[str, Any], *, platform: Platform
+) -> CollectedStore | None:
+    """장소 문서 하나를 Store로 옮긴다. 이름이나 id가 없으면 버린다.
+
+    브랜드가 달라도 응답 모양은 같으므로 platform만 받는다.
+    """
+    idx = document.get("id")
+    name = (document.get("place_name") or "").strip()
+
+    if not idx or not name:
+        return None
+
+    # 도로명 주소가 비어 있는 장소가 있어 지번 주소로 대체한다. 어느 쪽인지
+    # 구분해서 담지는 않는다. 그 해석은 enrich가 맡는다.
+    jibun = (document.get("address_name") or "").strip()
+    address = (document.get("road_address_name") or "").strip() or jibun
+
+    return CollectedStore(
+        platform=platform,
+        idx=str(idx),
+        name=name,
+        address=address or None,
+        phone=(document.get("phone") or "").strip() or None,
+        # Kakao는 x가 경도, y가 위도다.
+        longitude=_coordinate(document.get("x")),
+        latitude=_coordinate(document.get("y")),
+    )
+
+
+@task
+def parse_stores(
+    documents: list[dict[str, Any]], *, platform: Platform
+) -> list[CollectedStore]:
+    """문서 목록에서 지점을 추출한다."""
+    logger = get_run_logger()
+
+    stores = [
+        store
+        for store in (to_store(document, platform=platform) for document in documents)
+        if store is not None
+    ]
+
+    dropped = len(documents) - len(stores)
+    if dropped:
+        logger.warning("id나 이름이 없는 문서 %d건을 건너뛰었습니다.", dropped)
+
+    return stores
