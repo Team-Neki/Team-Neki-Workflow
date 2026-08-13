@@ -73,8 +73,14 @@ UI나 cron이 워크플로를 직접 실행하지 않습니다. flow run 레코�
 출력이 브랜드마다 달라지고, 그러면 enrich가 4개를 한 번에 받지 못합니다.
 
 지오코딩 같은 외부 API 보강은 enrich에 모읍니다. 수집 flow에 붙이면 Kakao 장애가
-수집 실패가 되고, 색인 규칙을 고칠 때마다 크롤링이 따라 돕니다. 픽닷과 모노맨션은
-수집원 자체가 Kakao라 예외지만, 이 경우에도 받아온 값을 해석하지는 않습니다.
+수집 실패가 되고, 색인 규칙을 고칠 때마다 크롤링이 따라 돕니다. 픽닷, 모노맨션,
+포토랩플러스는 수집원 자체가 Kakao라 예외지만, 이 경우에도 받아온 값을 해석하지는
+않습니다.
+
+포토랩플러스는 사이트에 목록이 있는데도 Kakao를 씁니다. 탭이 무규칙한 iframe으로
+나뉘고 손으로 만든 텍스트 위젯이라 주소가 두 줄로 쪼개진 항목이 있으며, 제주 지점에
+서울 주소가 들어가 있는 등 **사이트가 틀린 값을 줍니다.** 파서로는 걸러지지 않는
+문제라 수집원 자체를 바꾼 것입니다.
 
 ### Kakao 장소검색의 45건 상한
 
@@ -371,9 +377,13 @@ make photosignature
 make planbstudio
 make picdot
 make monomansion
+make photolabplus
 make collect
 make s3-ls
 ```
+
+`picdot`, `monomansion`, `photolabplus`는 `KAKAO_API_KEY`가 있어야 돕니다. 키가
+없으면 `flows/common/kakao.py`의 `api_key()`가 `RuntimeError`로 막습니다.
 
 적재를 건드렸다면 실행 결과가 아니라 적재물을 봐야 합니다. `make s3-ls`로 키가
 빠짐없이 올라갔는지 보고, 같은 flow를 두 번 돌려 키 수가 늘지 않는지 확인합니다.
