@@ -368,6 +368,7 @@ make localstack
 make hello
 make lifefourcuts
 make photosignature
+make photogray
 make planbstudio
 make picdot
 make monomansion

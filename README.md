@@ -195,6 +195,7 @@ make
   hello           hello 워크플로를 실행한다
   lifefourcuts    인생네컷 지점을 수집한다
   photosignature  포토시그니처 지점을 수집한다
+  photogray       포토그레이 지점을 수집한다
   planbstudio     플랜비스튜디오 지점을 수집한다
   picdot          픽닷 지점을 수집한다 (KAKAO_API_KEY 필요)
   monomansion     모노맨션 지점을 수집한다 (KAKAO_API_KEY 필요)
@@ -268,6 +269,7 @@ LocalStack 표준 포트는 4566입니다. 다른 프로젝트가 이미 쓰고 
 make hello
 make lifefourcuts
 make photosignature
+make photogray
 make planbstudio
 make picdot
 make monomansion
@@ -280,7 +282,7 @@ make monomansion
 Kakao Developers에서 앱을 만들고 `앱` > `플랫폼 키` > **REST API 키**를 씁니다.
 서버 호출용이라 플랫폼 등록이나 비즈 앱 전환은 필요 없습니다.
 
-네 워크플로 모두 수집 결과를 S3에 적재하므로 `make localstack`이 먼저 떠 있어야
+지점 수집 워크플로는 모두 결과를 S3에 적재하므로 `make localstack`이 먼저 떠 있어야
 합니다. 적재 없이 파싱만 확인하려면 `persist`를 끕니다.
 
 ```bash

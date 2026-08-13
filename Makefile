@@ -21,9 +21,9 @@ endif
 PREFECT_ENV = PREFECT_API_URL=$(API_URL)
 
 .DEFAULT_GOAL := help
-.PHONY: help setup check hello lifefourcuts photosignature planbstudio picdot \
-	monomansion collect localstack localstack-down s3-init s3-ls serve server \
-	deploy build clean
+.PHONY: help setup check hello lifefourcuts photosignature photogray planbstudio \
+	picdot monomansion collect localstack localstack-down s3-init s3-ls serve \
+	server deploy build clean
 
 help: ## 명령 목록을 출력한다
 	@echo "사용법: make <명령>"
@@ -57,6 +57,12 @@ photosignature: ## 포토시그니처 지점을 수집한다
 	@$(UV) run python -c "\
 	from flows.photosignature_stores import photosignature_stores; \
 	stores = photosignature_stores(); \
+	print('수집', len(stores), '건')"
+
+photogray: ## 포토그레이 지점을 수집한다
+	@$(UV) run python -c "\
+	from flows.photogray_stores import photogray_stores; \
+	stores = photogray_stores(); \
 	print('수집', len(stores), '건')"
 
 planbstudio: ## 플랜비스튜디오 지점을 수집한다
