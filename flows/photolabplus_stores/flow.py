@@ -24,6 +24,7 @@ Kakao 는 좌표와 전화까지 한 번에 오고 위 오류 데이터도 타�
 """
 
 import json
+from collections.abc import Sequence
 from typing import Any
 
 from prefect import flow, get_run_logger
@@ -37,12 +38,12 @@ from flows.common.store import CollectedStore
 # 표기에 공백이 섞여 있다. 사이트 안에서도 `포토랩플러스` 와 `포토랩 플러스` 가
 # 함께 쓰인다(`혜화점` 주소 문자열). 기본값은 공백 없는 쪽이지만 어느 표기로
 # 등록된 장소가 많은지는 아직 확인하지 못했다. 아래 docstring 참고.
-QUERIES = ["포토랩플러스"]
+QUERIES = ("포토랩플러스",)
 
 
 @flow(name="photolabplus-stores", log_prints=True)
 def photolabplus_stores(
-    queries: list[str] = QUERIES,
+    queries: Sequence[str] = QUERIES,
     persist: bool = True,
 ) -> list[CollectedStore]:
     """좌표 사각형을 쪼개가며 전량을 받아온다.
@@ -72,40 +73,43 @@ def photolabplus_stores(
     logger = get_run_logger()
 
     if not queries:
-        raise ValueError("질의어가 비어 있습니다.")
+        raise ValueError("질의어가 없습니다. 최소 하나는 있어야 합니다.")
 
     # 질의가 둘 이상이면 id 로 합친다. search_all 이 사각형별 응답을 이미 dict 로
     # 합치므로, 질의 사이의 중복도 같은 열쇠로 사라진다.
     documents: dict[str, dict[str, Any]] = {}
-    expected = 0
+    shortfalls: list[tuple[str, int, int]] = []
 
     for query in queries:
-        found, total = search_all(query)
-        logger.info("'%s' total_count %d, 수집 문서 %d건", query, total, len(found))
+        found, expected = search_all(query)
 
         documents.update({document["id"]: document for document in found})
-        # 질의마다 total_count 가 다르므로 가장 큰 것을 기준으로 삼는다. 어느
-        # 질의도 약속한 만큼을 못 채웠다면 분할이 덜 내려간 것이다. 질의를 합쳐
-        # 이보다 많아지는 것은 표기가 갈렸다는 뜻이라 정상이다.
-        expected = max(expected, total)
+
+        # total_count 는 노출 상한과 무관하게 실제 개수를 알려준다. 분할이
+        # 어딘가에서 덜 내려갔다면 여기서 드러난다. 질의별로 대조하는 이유는
+        # 질의끼리 결과가 겹칠 수 있어 total_count 를 합산할 수 없기 때문이다.
+        # 합계로 보면 한 질의의 미달을 다른 질의가 메워 가려버린다.
+        if len(found) < expected:
+            shortfalls.append((query, len(found), expected))
+
+        logger.info("'%s' 검색 %d건 (total_count %d)", query, len(found), expected)
 
     merged = list(documents.values())
     stores = parse_stores(merged, platform=Platform.PHOTO_LAB_PLUS)
 
     if not stores:
         raise ValueError(
-            f"{queries} 검색 결과가 없습니다. 질의어나 API 키를 확인해야 합니다."
+            f"{list(queries)} 검색 결과가 없습니다. 질의어나 API 키를 확인해야 합니다."
         )
 
     log_stores(stores, label="포토랩플러스")
 
-    # total_count는 노출 상한과 무관하게 실제 개수를 알려준다. 분할이 어딘가에서
-    # 덜 내려갔다면 여기서 드러난다.
-    if len(stores) < expected:
+    for query, collected, expected in shortfalls:
         logger.warning(
-            "수집 %d건이 total_count %d건에 못 미칩니다. 분할이 부족했을 수 "
+            "'%s' 수집 %d건이 total_count %d건에 못 미칩니다. 분할이 부족했을 수 "
             "있습니다.",
-            len(stores),
+            query,
+            collected,
             expected,
         )
 
@@ -119,5 +123,5 @@ def photolabplus_stores(
         )
         put_stores(stores, platform=Platform.PHOTO_LAB_PLUS)
 
-    logger.info("수집 완료: 지점 %d건 (total_count %d)", len(stores), expected)
+    logger.info("수집 완료: 지점 %d건 (질의 %d개)", len(stores), len(queries))
     return stores
