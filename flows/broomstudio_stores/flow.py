@@ -63,18 +63,21 @@ def broomstudio_stores(
         raise ValueError("질의어가 없습니다. 최소 하나는 있어야 합니다.")
 
     found: dict[str, dict[str, Any]] = {}
-    expected = 0
+    shortfalls: list[tuple[str, int, int]] = []
 
     for query in queries:
-        matched, total = search_all(query)
+        matched, expected = search_all(query)
         for document in matched:
             found[document["id"]] = document
 
-        # 질의를 여러 개 쓸 때 total_count 를 더하지 않는다. 두 표기에 다 걸리는
-        # 지점이 있으면 겹쳐 세어 실제보다 커진다. 가장 큰 것을 기준으로 두면
-        # 적어도 그만큼은 나와야 한다는 하한이 되어 대조에 쓸 수 있다.
-        expected = max(expected, total)
-        logger.info("'%s' 질의: total_count %d, 누적 %d건", query, total, len(found))
+        # total_count 는 노출 상한과 무관하게 실제 개수를 알려준다. 분할이
+        # 어딘가에서 덜 내려갔다면 여기서 드러난다. 질의별로 대조하는 이유는
+        # 질의끼리 결과가 겹칠 수 있어 total_count 를 합산할 수 없기 때문이다.
+        # 합계로 보면 한 질의의 미달을 다른 질의가 메워 가려버린다.
+        if len(matched) < expected:
+            shortfalls.append((query, len(matched), expected))
+
+        logger.info("'%s' 검색 %d건 (total_count %d)", query, len(matched), expected)
 
     documents = list(found.values())
     stores = parse_stores(documents, platform=Platform.BROOM_STUDIO)
@@ -86,13 +89,12 @@ def broomstudio_stores(
 
     log_stores(stores, label="비룸스튜디오")
 
-    # total_count는 노출 상한과 무관하게 실제 개수를 알려준다. 분할이 어딘가에서
-    # 덜 내려갔다면 여기서 드러난다.
-    if len(stores) < expected:
+    for query, collected, expected in shortfalls:
         logger.warning(
-            "수집 %d건이 total_count %d건에 못 미칩니다. 분할이 부족했을 수 "
+            "'%s' 수집 %d건이 total_count %d건에 못 미칩니다. 분할이 부족했을 수 "
             "있습니다.",
-            len(stores),
+            query,
+            collected,
             expected,
         )
 
@@ -106,5 +108,5 @@ def broomstudio_stores(
         )
         put_stores(stores, platform=Platform.BROOM_STUDIO)
 
-    logger.info("수집 완료: 지점 %d건 (total_count %d)", len(stores), expected)
+    logger.info("수집 완료: 지점 %d건 (질의 %d개)", len(stores), len(queries))
     return stores
