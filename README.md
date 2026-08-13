@@ -64,6 +64,11 @@ UI나 cron이 워크플로를 직접 실행하지는 않습니다. flow run 레�
 주소는 `경남 통영시 광도면 죽림리 1569-39 1층 102호 플랜비스튜디오 통영점`처럼
 한 브랜드 안에서도 도로명과 지번이 섞여 있는데, 이 상태 그대로 둡니다.
 
+수집원이 같은 브랜드는 파서를 공유합니다. 인생네컷과 포토이즘은 같은 imweb 지도
+위젯을 쓰므로 `flows/common/imweb_map.py` 하나가 순회와 파싱을 맡고, 브랜드 flow는
+`base_url`, `board_code`, `referer`, `platform` 넷만 넘깁니다. 브랜드마다 파서를
+두면 위젯이 개편됐을 때 한 곳만 고치고 넘어가게 됩니다.
+
 이렇게 나누면 단계마다 따로 재실행할 수 있습니다. enrich는 외부 API라 느리고
 쿼터가 있고 실패하는 반면 index는 순수 함수라 빠릅니다. 두 단계를 붙여두면 색인
 규칙 하나 바꿀 때마다 외부 API를 전량 다시 호출하게 됩니다. 대신 단계 사이에
@@ -194,6 +199,7 @@ make
   check           임포트와 deployment 수집을 확인한다
   hello           hello 워크플로를 실행한다
   lifefourcuts    인생네컷 지점을 수집한다
+  photoism        포토이즘 지점을 수집한다
   photosignature  포토시그니처 지점을 수집한다
   planbstudio     플랜비스튜디오 지점을 수집한다
   picdot          픽닷 지점을 수집한다 (KAKAO_API_KEY 필요)
@@ -267,6 +273,7 @@ LocalStack 표준 포트는 4566입니다. 다른 프로젝트가 이미 쓰고 
 ```bash
 make hello
 make lifefourcuts
+make photoism
 make photosignature
 make planbstudio
 make picdot
@@ -280,7 +287,7 @@ make monomansion
 Kakao Developers에서 앱을 만들고 `앱` > `플랫폼 키` > **REST API 키**를 씁니다.
 서버 호출용이라 플랫폼 등록이나 비즈 앱 전환은 필요 없습니다.
 
-네 워크플로 모두 수집 결과를 S3에 적재하므로 `make localstack`이 먼저 떠 있어야
+수집 워크플로는 모두 결과를 S3에 적재하므로 `make localstack`이 먼저 떠 있어야
 합니다. 적재 없이 파싱만 확인하려면 `persist`를 끕니다.
 
 ```bash

@@ -17,12 +17,14 @@ from flows.common.platform import Platform
 from flows.common.storage import latest_dt, put_run_manifest, read_manifest, today
 from flows.lifefourcuts_stores import lifefourcuts_stores
 from flows.monomansion_stores import monomansion_stores
+from flows.photoism_stores import photoism_stores
 from flows.photosignature_stores import photosignature_stores
 from flows.picdot_stores import picdot_stores
 from flows.planbstudio_stores import planbstudio_stores
 
 BRANDS: dict[Platform, Callable[..., list[Any]]] = {
     Platform.LIFE_FOUR_CUT: lifefourcuts_stores,
+    Platform.PHOTOISM: photoism_stores,
     Platform.PHOTO_SIGNATURE: photosignature_stores,
     Platform.PLANB_STUDIO: planbstudio_stores,
     Platform.PICDOT: picdot_stores,
