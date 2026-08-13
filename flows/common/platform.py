@@ -10,6 +10,7 @@ from enum import StrEnum
 class Platform(StrEnum):
     """지점 정보를 수집한 브랜드."""
 
+    HARU_FILM = "HARU_FILM"
     LIFE_FOUR_CUT = "LIFE_FOUR_CUT"
     MONO_MANSION = "MONO_MANSION"
     PHOTO_SIGNATURE = "PHOTO_SIGNATURE"

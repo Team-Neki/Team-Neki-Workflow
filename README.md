@@ -198,6 +198,7 @@ make
   planbstudio     플랜비스튜디오 지점을 수집한다
   picdot          픽닷 지점을 수집한다 (KAKAO_API_KEY 필요)
   monomansion     모노맨션 지점을 수집한다 (KAKAO_API_KEY 필요)
+  harufilm        하루필름 지점을 수집한다 (KAKAO_API_KEY 필요)
   collect         전체 브랜드를 병렬로 수집한다
   localstack      로컬 S3(LocalStack)를 띄운다
   localstack-down 로컬 S3를 내린다
@@ -271,16 +272,17 @@ make photosignature
 make planbstudio
 make picdot
 make monomansion
+make harufilm
 ```
 
-`picdot`과 `monomansion`은 Kakao Local API를 호출하므로 `KAKAO_API_KEY`가 필요합니다. `.env`에 넣어두면
+`picdot`, `monomansion`, `harufilm`은 Kakao Local API를 호출하므로 `KAKAO_API_KEY`가 필요합니다. `.env`에 넣어두면
 `make`가 알아서 읽습니다. `uv run`은 `.env`를 자동으로 읽지 않으므로, Makefile을 거치지
 않고 직접 실행할 때는 `uv run --env-file .env ...`로 지정해야 합니다.
 
 Kakao Developers에서 앱을 만들고 `앱` > `플랫폼 키` > **REST API 키**를 씁니다.
 서버 호출용이라 플랫폼 등록이나 비즈 앱 전환은 필요 없습니다.
 
-네 워크플로 모두 수집 결과를 S3에 적재하므로 `make localstack`이 먼저 떠 있어야
+모든 수집 워크플로가 결과를 S3에 적재하므로 `make localstack`이 먼저 떠 있어야
 합니다. 적재 없이 파싱만 확인하려면 `persist`를 끕니다.
 
 ```bash
