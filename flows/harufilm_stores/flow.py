@@ -17,6 +17,7 @@ Kakao 는 좌표와 전화까지 한 번에 온다. 픽닷·모노맨션과 같�
 """
 
 import json
+from collections.abc import Sequence
 from typing import Any
 
 from prefect import flow, get_run_logger
@@ -28,12 +29,12 @@ from flows.common.storage import put_raw, put_stores
 from flows.common.store import CollectedStore
 
 # 기본 질의어. 아직 확정된 값이 아니다. 아래 docstring 참고.
-QUERIES = ["하루필름"]
+QUERIES = ("하루필름",)
 
 
 @flow(name="harufilm-stores", log_prints=True)
 def harufilm_stores(
-    queries: list[str] | None = None,
+    queries: Sequence[str] = QUERIES,
     persist: bool = True,
 ) -> list[CollectedStore]:
     """좌표 사각형을 쪼개가며 전량을 받아온다.
@@ -61,13 +62,14 @@ def harufilm_stores(
     """
     logger = get_run_logger()
 
-    targets = list(queries) if queries else list(QUERIES)
+    if not queries:
+        raise ValueError("질의어가 없습니다. 최소 하나는 있어야 합니다.")
 
     # 질의마다 사각형을 쪼개 받고 id 로 합친다.
     documents: dict[str, dict[str, Any]] = {}
     shortfalls: list[tuple[str, int, int]] = []
 
-    for query in targets:
+    for query in queries:
         found, expected = search_all(query)
 
         for document in found:
@@ -86,7 +88,7 @@ def harufilm_stores(
 
     if not stores:
         raise ValueError(
-            f"{targets} 검색 결과가 없습니다. 질의어나 API 키를 확인해야 합니다."
+            f"{list(queries)} 검색 결과가 없습니다. 질의어나 API 키를 확인해야 합니다."
         )
 
     log_stores(stores, label="하루필름")
@@ -110,5 +112,5 @@ def harufilm_stores(
         )
         put_stores(stores, platform=Platform.HARU_FILM)
 
-    logger.info("수집 완료: 지점 %d건 (질의 %d개)", len(stores), len(targets))
+    logger.info("수집 완료: 지점 %d건 (질의 %d개)", len(stores), len(queries))
     return stores
