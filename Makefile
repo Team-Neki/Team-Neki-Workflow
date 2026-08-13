@@ -21,9 +21,9 @@ endif
 PREFECT_ENV = PREFECT_API_URL=$(API_URL)
 
 .DEFAULT_GOAL := help
-.PHONY: help setup check hello lifefourcuts photoism photosignature planbstudio \
-	picdot monomansion collect localstack localstack-down s3-init s3-ls serve \
-	server deploy build clean
+.PHONY: help setup check hello lifefourcuts photoism dontlxxkup photosignature \
+	planbstudio picdot monomansion collect localstack localstack-down s3-init \
+	s3-ls serve server deploy build clean
 
 help: ## 명령 목록을 출력한다
 	@echo "사용법: make <명령>"
@@ -57,6 +57,12 @@ photoism: ## 포토이즘 지점을 수집한다
 	@$(UV) run python -c "\
 	from flows.photoism_stores import photoism_stores; \
 	stores = photoism_stores(); \
+	print('수집', len(stores), '건')"
+
+dontlxxkup: ## 돈룩업 지점을 수집한다
+	@$(UV) run python -c "\
+	from flows.dontlxxkup_stores import dontlxxkup_stores; \
+	stores = dontlxxkup_stores(); \
 	print('수집', len(stores), '건')"
 
 photosignature: ## 포토시그니처 지점을 수집한다

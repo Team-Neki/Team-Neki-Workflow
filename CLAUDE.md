@@ -18,7 +18,7 @@ flows/
   common/                 여러 워크플로가 함께 쓰는 task
     store.py              수집 공통 스키마 (CollectedStore)
     storage.py            S3 적재
-    imweb_map.py          imweb 지도 위젯 수집 (인생네컷, 포토이즘)
+    imweb_map.py          imweb 지도 위젯 수집 (인생네컷, 포토이즘, 돈룩업)
 aws/config                로컬 개발용 AWS 프로파일
 compose.yaml              로컬 S3 (LocalStack)
 ```
@@ -79,7 +79,7 @@ UI나 cron이 워크플로를 직접 실행하지 않습니다. flow run 레코�
 
 ### imweb 지도 위젯은 한 모듈이 담당합니다
 
-인생네컷과 포토이즘은 같은 imweb 위젯을 씁니다. 목록 페이지 HTML에는 지점이 없고
+인생네컷과 포토이즘, 돈룩업은 같은 imweb 위젯을 씁니다. 목록 페이지 HTML에는 지점이 없고
 AJAX 엔드포인트가 HTML 조각을 돌려주므로, 페이지를 긁지 않고 엔드포인트를 직접
 호출합니다. 엔드포인트와 셀렉터가 사이트를 넘나들며 그대로 먹습니다.
 
@@ -400,6 +400,7 @@ make localstack
 make hello
 make lifefourcuts
 make photoism
+make dontlxxkup
 make photosignature
 make planbstudio
 make picdot
@@ -413,7 +414,7 @@ make s3-ls
 늘어난다면 파티션 경로에 실행마다 바뀌는 값이 섞인 것입니다.
 
 `flows/common/`의 수집 모듈을 고쳤다면 그것을 쓰는 브랜드를 모두 돌려 건수가
-전과 같은지 봐야 합니다. `imweb_map.py`는 인생네컷과 포토이즘이 함께 씁니다.
+전과 같은지 봐야 합니다. `imweb_map.py`는 인생네컷과 포토이즘, 돈룩업이 함께 씁니다.
 
 파싱만 확인하고 싶으면 적재를 끕니다.
 

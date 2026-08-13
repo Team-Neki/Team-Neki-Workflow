@@ -64,8 +64,8 @@ UI나 cron이 워크플로를 직접 실행하지는 않습니다. flow run 레�
 주소는 `경남 통영시 광도면 죽림리 1569-39 1층 102호 플랜비스튜디오 통영점`처럼
 한 브랜드 안에서도 도로명과 지번이 섞여 있는데, 이 상태 그대로 둡니다.
 
-수집원이 같은 브랜드는 파서를 공유합니다. 인생네컷과 포토이즘은 같은 imweb 지도
-위젯을 쓰므로 `flows/common/imweb_map.py` 하나가 순회와 파싱을 맡고, 브랜드 flow는
+수집원이 같은 브랜드는 파서를 공유합니다. 인생네컷과 포토이즘, 돈룩업은 같은 imweb
+지도 위젯을 쓰므로 `flows/common/imweb_map.py` 하나가 순회와 파싱을 맡고, 브랜드 flow는
 `base_url`, `board_code`, `referer`, `platform` 넷만 넘깁니다. 브랜드마다 파서를
 두면 위젯이 개편됐을 때 한 곳만 고치고 넘어가게 됩니다.
 
@@ -200,6 +200,7 @@ make
   hello           hello 워크플로를 실행한다
   lifefourcuts    인생네컷 지점을 수집한다
   photoism        포토이즘 지점을 수집한다
+  dontlxxkup      돈룩업 지점을 수집한다
   photosignature  포토시그니처 지점을 수집한다
   planbstudio     플랜비스튜디오 지점을 수집한다
   picdot          픽닷 지점을 수집한다 (KAKAO_API_KEY 필요)
@@ -274,6 +275,7 @@ LocalStack 표준 포트는 4566입니다. 다른 프로젝트가 이미 쓰고 
 make hello
 make lifefourcuts
 make photoism
+make dontlxxkup
 make photosignature
 make planbstudio
 make picdot
