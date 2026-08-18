@@ -8,6 +8,7 @@
 """
 
 import json
+from collections.abc import Sequence
 from typing import Any
 
 from prefect import flow, get_run_logger
@@ -32,7 +33,7 @@ BRANCH_CATEGORY = "문화,예술"
 
 
 def _split_branches(
-    documents: list[dict[str, Any]], *, names: tuple[str, ...], category: str
+    documents: list[dict[str, Any]], *, names: Sequence[str], category: str
 ) -> tuple[list[dict[str, Any]], list[str]]:
     """지점이 아닌 장소를 갈라낸다. 뺀 것은 이유와 함께 돌려준다.
 
