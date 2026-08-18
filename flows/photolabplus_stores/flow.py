@@ -21,8 +21,8 @@ from flows.common.platform import Platform
 from flows.common.storage import put_raw, put_stores
 from flows.common.store import CollectedStore
 
-# 표기에 공백이 섞여 있지만 질의는 하나면 된다. `포토랩플러스` 와 `포토랩 플러스`
-# 가 total_count 76 으로 같고 문서도 완전히 같았다 (2026-08-18 실측).
+# 표기에 공백이 섞여 있지만 질의는 하나면 된다. `포토랩 플러스` 로 물어도 같은
+# 문서가 나온다.
 QUERIES = ("포토랩플러스",)
 
 # 이름과 업종 둘로 거른다. `포토랩플러스 본사`는 브랜드명을 달고 있지만 업종이
