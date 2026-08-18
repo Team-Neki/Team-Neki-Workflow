@@ -17,6 +17,7 @@ Kakao 는 좌표와 전화까지 한 번에 온다. 픽닷·모노맨션과 같�
 """
 
 import json
+from collections import defaultdict
 from collections.abc import Sequence
 from typing import Any
 
@@ -41,26 +42,57 @@ QUERIES = ("하루필름", "크림필터", "하루에어")
 # 전포점`, `하루에어 홍대점`처럼 `하루필름`이 아예 없는 지점이 있어서다.
 BRAND_NAMES = ("하루필름", "크림필터", "하루에어")
 
+# 이름에 계열명이 있어도 지점이 아닌 것이 섞인다. `하나은행365 하루필름순천점`은
+# 카테고리가 `금융,보험 > 금융서비스 > 은행 > ATM` 인 현금인출기다.
+#
+# 빼는 쪽을 나열하지 않고 담을 쪽을 정한다. 나열하면 다음에 어떤 업종이 섞여
+# 들어올지 알 수 없다. 계열 필터를 통과한 111건 중 110건이 이 아래였다.
+BRANCH_CATEGORY = "문화,예술"
+
 
 def _split_branches(
-    documents: list[dict[str, Any]], *, names: Sequence[str]
+    documents: list[dict[str, Any]], *, names: Sequence[str], category: str
 ) -> tuple[list[dict[str, Any]], list[str]]:
-    """이름에 계열 표기가 하나도 없는 장소를 갈라낸다.
+    """지점이 아닌 장소를 갈라낸다.
 
-    뺀 것은 이름으로 함께 돌려준다. 조용히 사라지면 나중에 빠진 것이 지점인지
-    경쟁사인지 알 수 없다.
+    이름에 계열 표기가 하나도 없거나, 업종이 사진이 아니면 뺀다. 뺀 것은 이유와
+    함께 돌려준다. 조용히 사라지면 나중에 빠진 것이 지점인지 아닌지 알 수 없다.
     """
     branches: list[dict[str, Any]] = []
     dropped: list[str] = []
 
     for document in documents:
-        name = (document.get("place_name") or "").strip()
-        if any(brand in name for brand in names):
-            branches.append(document)
+        name = (document.get("place_name") or "").strip() or "(이름 없음)"
+        group = (document.get("category_name") or "").strip() or "(업종 없음)"
+
+        if not any(brand in name for brand in names):
+            dropped.append(f"{name} — 계열 아님")
+        elif not group.startswith(category):
+            dropped.append(f"{name} — {group}")
         else:
-            dropped.append(name or "(이름 없음)")
+            branches.append(document)
 
     return branches, dropped
+
+
+def _same_position(stores: list[CollectedStore]) -> list[list[CollectedStore]]:
+    """좌표가 똑같은 지점끼리 묶어 둘 이상인 것만 돌려준다.
+
+    Kakao 에 같은 가게가 두 번 등록된 경우가 있다. `크림필터 전포점`과
+    `하루필름 크림필터전포점`은 주소도 좌표도 소수점까지 같은데 장소 id 가 달라
+    id 로 합치는 것만으로는 걸러지지 않는다.
+
+    여기서 합치지는 않는다. 어느 id 를 살릴지는 사이트가 준 값만으로 정할 수
+    없고, 그 판단은 enrich 의 일이다. 드러내기만 한다.
+    """
+    positions: dict[tuple[float, float], list[CollectedStore]] = defaultdict(list)
+
+    for store in stores:
+        if store.longitude is None or store.latitude is None:
+            continue
+        positions[(store.longitude, store.latitude)].append(store)
+
+    return [group for group in positions.values() if len(group) > 1]
 
 
 @flow(name="harufilm-stores", log_prints=True)
@@ -83,8 +115,10 @@ def harufilm_stores(
     두 질의에 모두 걸리는 지점이 있어도 중복이 생기지 않는다.
 
     이름은 Kakao 가 준 그대로 담는다. 서브 라인 접두를 떼거나 붙여 맞추는 것은
-    해석이므로 enrich 의 일이다. 다만 계열이 아닌 장소는 뺀다. BRAND_NAMES 의
-    주석을 참고한다.
+    해석이므로 enrich 의 일이다. 다만 지점이 아닌 것은 뺀다. 계열명과 업종 둘로
+    거르며 BRAND_NAMES, BRANCH_CATEGORY 의 주석을 참고한다.
+
+    좌표가 같은 지점은 경고만 남기고 합치지 않는다. _same_position 을 참고한다.
 
     persist 를 끄면 S3에 적재하지 않는다. 파싱만 확인할 때 쓴다.
     """
@@ -113,9 +147,11 @@ def harufilm_stores(
 
     merged = list(documents.values())
 
-    branches, dropped = _split_branches(merged, names=BRAND_NAMES)
+    branches, dropped = _split_branches(
+        merged, names=BRAND_NAMES, category=BRANCH_CATEGORY
+    )
     if dropped:
-        logger.info("계열이 아니라 뺀 장소 %d건: %s", len(dropped), dropped)
+        logger.info("지점이 아니라 뺀 장소 %d건: %s", len(dropped), dropped)
 
     stores = parse_stores(branches, platform=Platform.HARU_FILM)
 
@@ -125,6 +161,14 @@ def harufilm_stores(
         )
 
     log_stores(stores, label="하루필름")
+
+    for group in _same_position(stores):
+        logger.warning(
+            "좌표가 같은 지점이 %d건 있습니다. Kakao 에 같은 가게가 여러 번 "
+            "등록됐을 수 있습니다: %s",
+            len(group),
+            [(store.idx, store.name) for store in group],
+        )
 
     for query, collected, expected in shortfalls:
         logger.warning(
