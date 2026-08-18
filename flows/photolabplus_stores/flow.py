@@ -35,10 +35,38 @@ from flows.common.platform import Platform
 from flows.common.storage import put_raw, put_stores
 from flows.common.store import CollectedStore
 
-# 표기에 공백이 섞여 있다. 사이트 안에서도 `포토랩플러스` 와 `포토랩 플러스` 가
-# 함께 쓰인다(`혜화점` 주소 문자열). 기본값은 공백 없는 쪽이지만 어느 표기로
-# 등록된 장소가 많은지는 아직 확인하지 못했다. 아래 docstring 참고.
+# 표기에 공백이 섞여 있지만 질의는 하나면 된다. `포토랩플러스` 와 `포토랩 플러스`
+# 가 total_count 76 으로 같고 문서도 완전히 같았다 (2026-08-18 실측).
 QUERIES = ("포토랩플러스",)
+
+# 이름에 브랜드가 있어도 지점이 아닌 것이 섞인다. `포토랩플러스 본사`는 업종이
+# `서비스,산업 > 기업` 인 사무실이다. 이름으로는 걸러지지 않는다.
+#
+# 빼는 쪽을 나열하지 않고 담을 쪽을 정한다. 나열하면 다음에 어떤 업종이 섞여
+# 들어올지 알 수 없다. 76건 중 75건이 이 아래였다.
+BRANCH_CATEGORY = "문화,예술"
+
+
+def _split_branches(
+    documents: list[dict[str, Any]], *, category: str
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """업종이 사진이 아닌 장소를 갈라낸다. 뺀 것은 이유와 함께 돌려준다.
+
+    조용히 사라지면 나중에 빠진 것이 지점인지 아닌지 알 수 없다.
+    """
+    branches: list[dict[str, Any]] = []
+    dropped: list[str] = []
+
+    for document in documents:
+        name = (document.get("place_name") or "").strip() or "(이름 없음)"
+        group = (document.get("category_name") or "").strip() or "(업종 없음)"
+
+        if group.startswith(category):
+            branches.append(document)
+        else:
+            dropped.append(f"{name} — {group}")
+
+    return branches, dropped
 
 
 @flow(name="photolabplus-stores", log_prints=True)
@@ -52,21 +80,14 @@ def photolabplus_stores(
     넘는다. 모노맨션처럼 사각형 분할이 필요하며 분할 자체는 common.kakao 가
     맡는다.
 
-    질의어를 문자열 하나가 아니라 목록으로 받는 이유가 있다. 상호 표기가
-    `포토랩플러스` 와 `포토랩 플러스` 로 갈리는데, Kakao 에 어느 쪽으로 더 많이
-    등록돼 있는지는 KAKAO_API_KEY 가 없어 아직 확인하지 못했다. 가능한 결말은
-    셋이다.
-
-    - 한쪽 질의에 전부 잡힌다 : 그 표기 하나만 남긴다
-    - 표기가 갈려 어느 쪽도 전량이 아니다 : 둘 다 질의해 id 로 합쳐야 한다
-    - 한쪽이 다른 쪽을 포함한다 : 포함하는 쪽만 남긴다
-
-    셋 중 무엇이든 인자만 바꾸면 되도록 목록으로 받는다. 키를 확보하면
-    `queries=["포토랩플러스"]`, `["포토랩 플러스"]`, 둘 다를 차례로 돌려
-    total_count 와 수집 건수를 비교하고, 결론이 나면 QUERIES 를 고정한다.
+    질의어는 문자열 하나가 아니라 목록으로 받는다. 상호 표기가 `포토랩플러스` 와
+    `포토랩 플러스` 로 갈려 둘 다 물어야 할 수 있었기 때문인데, 실측해보니 두
+    표기가 같은 76건을 준다. 기본값은 하나만 두고 시그니처는 그대로 둔다.
+    표기가 갈리기 시작하면 인자만 바꾸면 된다.
 
     이름과 주소는 Kakao 가 준 그대로 담는다. 상호명이 섞였는지 층수가 붙었는지를
-    여기서 판정하지 않는다. 그 해석은 enrich 의 일이다.
+    여기서 판정하지 않는다. 그 해석은 enrich 의 일이다. 다만 지점이 아닌 것은
+    뺀다. BRANCH_CATEGORY 의 주석을 참고한다.
 
     persist 를 끄면 S3 에 적재하지 않는다. 파싱만 확인할 때 쓴다.
     """
@@ -95,7 +116,12 @@ def photolabplus_stores(
         logger.info("'%s' 검색 %d건 (total_count %d)", query, len(found), expected)
 
     merged = list(documents.values())
-    stores = parse_stores(merged, platform=Platform.PHOTO_LAB_PLUS)
+
+    branches, dropped = _split_branches(merged, category=BRANCH_CATEGORY)
+    if dropped:
+        logger.info("지점이 아니라 뺀 장소 %d건: %s", len(dropped), dropped)
+
+    stores = parse_stores(branches, platform=Platform.PHOTO_LAB_PLUS)
 
     if not stores:
         raise ValueError(
@@ -116,6 +142,8 @@ def photolabplus_stores(
     if persist:
         # 원문은 사각형마다 나뉜 응답을 id로 합친 것이다. 우리가 쓰지 않는
         # category_name이나 place_url까지 들어 있어 나중에 되짚을 수 있다.
+        # 걸러내기 전을 담는다. 뺀 것이 무엇이었는지 원문에 남아 있어야
+        # 필터가 과했는지 나중에 확인할 수 있다.
         put_raw(
             json.dumps(merged, ensure_ascii=False),
             platform=Platform.PHOTO_LAB_PLUS,
