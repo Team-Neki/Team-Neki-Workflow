@@ -1,15 +1,8 @@
 """비룸스튜디오 지점 목록을 Kakao 장소검색으로 수집한다.
 
-다른 브랜드와 달리 수집원을 고를 여지가 없다. 브랜드 도메인이 죽었다.
-
-    broomstudio.co.kr        NXDOMAIN
-    www.broomstudio.co.kr    NXDOMAIN
-    m.broomstudio.co.kr      NXDOMAIN
-
-예전에는 `broomstudio.co.kr/myboard/menu_list/789295`(전국 매장현황)와
-`m.broomstudio.co.kr/page/page16`에 목록이 있었지만 지금은 DNS 가 응답하지
-않는다. 사이트 복구를 기다릴 이유가 없으므로 Kakao 장소검색을 수집원으로 삼는다.
-픽닷과 같은 모양이 되고, 새로 쓰는 코드는 이 flow 하나다.
+다른 브랜드와 달리 수집원을 고를 여지가 없다. 브랜드 도메인이 죽어 있어
+(broomstudio.co.kr 은 NXDOMAIN) 사이트 목록 자체가 없다. 복구를 기다릴 이유가
+없으므로 Kakao 를 수집원으로 삼는다.
 """
 
 import json
@@ -24,28 +17,21 @@ from flows.common.platform import Platform
 from flows.common.storage import put_raw, put_stores
 from flows.common.store import CollectedStore
 
-# 표기에 공백이 섞여 있지만 질의는 하나면 된다. `비룸스튜디오` 와 `비룸 스튜디오`
-# 가 total_count 22 로 같고 문서도 완전히 같았다 (2026-08-18 실측).
-#
-# `비룸`만으로 질의하지는 않는다. 상호에 이 두 글자가 들어가는 무관한 장소가
+# `비룸`만으로 질의하지 않는다. 상호에 이 두 글자가 들어가는 무관한 장소가
 # 섞일 가능성이 높다.
 QUERIES = ("비룸스튜디오",)
 
-# 비룸스튜디오의 상호 표기. `비룸 스튜디오 Broom Studio`처럼 공백이 들어간
-# 것이 있어 한 표기로는 거를 수 없다.
+# `비룸 스튜디오 Broom Studio`처럼 공백이 들어간 것이 있어 한 표기로는 거를 수
+# 없다.
 BRAND_NAMES = ("비룸스튜디오", "비룸 스튜디오")
 
-# 이름과 업종 둘로 거른다. 22건 중 2건이 파티룸 대여업이었다.
-#
-#   플랜비스튜디오 N파티룸    서비스,산업 > 전문대행 > 공간대여
-#   렌탈스튜디오&파티룸 비온   서비스,산업 > 전문대행 > 공간대여
-#
-# 플랜비스튜디오는 우리가 따로 수집하는 브랜드라 그대로 두면 같은 지점이 두
-# 파티션에 다른 idx 로 들어간다.
+# 이름과 업종 둘로 거른다. 파티룸 대여업이 섞여 오는데 그중에는 우리가 따로
+# 수집하는 플랜비스튜디오도 있다. 그대로 두면 같은 지점이 두 파티션에 다른
+# idx 로 들어간다.
 #
 # 지금은 이름만으로도 둘 다 걸리지만 업종도 함께 본다. 하루필름에서는 경쟁사가
-# 사진 업종으로 등록돼 있어 이름으로만 걸러야 했고, 포토랩플러스에서는 본사가
-# 브랜드명을 달고 있어 업종으로만 걸러야 했다. 어느 쪽이 올지 알 수 없다.
+# 사진 업종이라 이름으로만 걸러야 했고, 포토랩플러스에서는 본사가 브랜드명을
+# 달고 있어 업종으로만 걸러야 했다. 어느 쪽이 올지 알 수 없다.
 BRANCH_CATEGORY = "문화,예술"
 
 
@@ -79,20 +65,9 @@ def broomstudio_stores(
     queries: Sequence[str] = QUERIES,
     persist: bool = True,
 ) -> list[CollectedStore]:
-    """좌표 사각형을 쪼개가며 전량을 받아온다.
+    """질의 결과를 장소 id 로 합친다. 두 질의에 걸리는 지점이 있어도 중복이 없다.
 
-    전국 질의의 total_count 는 22 다. 45건 상한 아래라 사각형을 쪼개지 않고 한
-    질의로 끝난다. 지점이 늘어 상한에 닿으면 common.kakao 가 알아서 사분할로
-    내려가므로 그때도 코드는 달라지지 않는다.
-
-    질의어를 하나가 아니라 목록으로 받는다. 표기가 갈려 있어(`비룸스튜디오` /
-    `비룸 스튜디오`) 한쪽 질의로 전량이 모이지 않으면 둘 다 질의해 합쳐야 할 수
-    있었기 때문이다. 실측해보니 두 표기가 같은 22건을 준다. 기본값은 하나만 두고
-    시그니처는 그대로 둔다. 합치는 기준은 장소 id 라 질의를 늘려도 같은 지점이
-    두 번 담기지 않는다.
-
-    이름과 주소는 Kakao 가 준 그대로 담는다. 다만 지점이 아닌 것은 뺀다.
-    BRAND_NAMES, BRANCH_CATEGORY 의 주석을 참고한다.
+    이름과 주소는 Kakao 가 준 그대로 담는다. 그 해석은 enrich 의 일이다.
 
     persist 를 끄면 S3 에 적재하지 않는다. 파싱만 확인할 때 쓴다.
     """
@@ -109,9 +84,7 @@ def broomstudio_stores(
         for document in matched:
             found[document["id"]] = document
 
-        # total_count 는 노출 상한과 무관하게 실제 개수를 알려준다. 분할이
-        # 어딘가에서 덜 내려갔다면 여기서 드러난다. 질의별로 대조하는 이유는
-        # 질의끼리 결과가 겹칠 수 있어 total_count 를 합산할 수 없기 때문이다.
+        # 질의별로 대조한다. 질의끼리 결과가 겹쳐 total_count 를 합산할 수 없고,
         # 합계로 보면 한 질의의 미달을 다른 질의가 메워 가려버린다.
         if len(matched) < expected:
             shortfalls.append((query, len(matched), expected))
@@ -145,10 +118,8 @@ def broomstudio_stores(
         )
 
     if persist:
-        # 원문은 사각형마다 나뉜 응답을 id로 합친 것이다. 우리가 쓰지 않는
-        # category_name이나 place_url까지 들어 있어 나중에 되짚을 수 있다.
-        # 걸러내기 전을 담는다. 뺀 것이 무엇이었는지 원문에 남아 있어야
-        # 필터가 과했는지 나중에 확인할 수 있다.
+        # 걸러내기 전을 담는다. 필터가 과했는지 나중에 확인하려면 뺀 것이
+        # 원문에 남아 있어야 한다.
         put_raw(
             json.dumps(documents, ensure_ascii=False),
             platform=Platform.BROOM_STUDIO,
