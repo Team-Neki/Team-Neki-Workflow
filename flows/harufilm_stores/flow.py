@@ -28,8 +28,39 @@ from flows.common.platform import Platform
 from flows.common.storage import put_raw, put_stores
 from flows.common.store import CollectedStore
 
-# 기본 질의어. 아직 확정된 값이 아니다. 아래 docstring 참고.
-QUERIES = ("하루필름",)
+# 기본 질의어. 셋을 다 물어야 전량이 나온다. `하루필름` 하나로는 112건이고
+# `크림필터`가 3건, `하루에어`가 1건을 더 준다 (2026-08-18 실측).
+QUERIES = ("하루필름", "크림필터", "하루에어")
+
+# 하루필름 계열의 상호 표기. Kakao 는 `하루필름` 질의에도 이름이 전혀 다른
+# 경쟁사를 함께 준다. 112건 중 5건이 포토리움, 포토그레이, 폴라스튜디오,
+# 인생네컷이었다. 특히 인생네컷은 우리가 따로 수집하는 브랜드라 그대로 두면
+# 같은 지점이 두 파티션에 다른 idx 로 들어간다.
+#
+# 포토그레이처럼 브랜드명 하나로 거를 수 없다. 계열 표기가 셋이고 `크림필터
+# 전포점`, `하루에어 홍대점`처럼 `하루필름`이 아예 없는 지점이 있어서다.
+BRAND_NAMES = ("하루필름", "크림필터", "하루에어")
+
+
+def _split_branches(
+    documents: list[dict[str, Any]], *, names: Sequence[str]
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """이름에 계열 표기가 하나도 없는 장소를 갈라낸다.
+
+    뺀 것은 이름으로 함께 돌려준다. 조용히 사라지면 나중에 빠진 것이 지점인지
+    경쟁사인지 알 수 없다.
+    """
+    branches: list[dict[str, Any]] = []
+    dropped: list[str] = []
+
+    for document in documents:
+        name = (document.get("place_name") or "").strip()
+        if any(brand in name for brand in names):
+            branches.append(document)
+        else:
+            dropped.append(name or "(이름 없음)")
+
+    return branches, dropped
 
 
 @flow(name="harufilm-stores", log_prints=True)
@@ -43,20 +74,17 @@ def harufilm_stores(
     45건을 넘는다. 분할 자체는 common.kakao 가 맡는다.
 
     픽닷·모노맨션과 달리 질의어를 목록으로 받는다. 지점명에 서브 라인이 섞여
-    있어 질의 하나로 전량이 나올지 확실하지 않기 때문이다. 사이트 목록에는
-    `하루필름 크림필터 연트럴파크점`, `하루필름 하루에어 강남점`처럼 접두가 붙은
-    것과 `크림필터 신촌점`, `크림필터 성수점`처럼 `하루필름`이 아예 없는 표기가
-    함께 있다. 후자가 Kakao 에서도 `하루필름` 질의에 걸리지 않는다면 질의를
-    늘려야 하는데, **KAKAO_API_KEY 가 없어 아직 실측하지 못했다.** 키를 받으면
-    기본값만 고치면 되도록 지금 목록으로 열어둔다.
+    있어 질의 하나로 전량이 나오지 않기 때문이다. 사이트 목록에는 `하루필름
+    크림필터 연트럴파크점`, `하루필름 하루에어 강남점`처럼 접두가 붙은 것과
+    `크림필터 신촌점`, `크림필터 성수점`처럼 `하루필름`이 아예 없는 표기가 함께
+    있다. 후자는 Kakao 에서도 `하루필름` 질의에 걸리지 않아 질의를 셋으로 둔다.
 
     질의를 여러 개 주면 결과를 장소 id 로 합친다. `하루필름 크림필터 성수점`처럼
     두 질의에 모두 걸리는 지점이 있어도 중복이 생기지 않는다.
 
     이름은 Kakao 가 준 그대로 담는다. 서브 라인 접두를 떼거나 붙여 맞추는 것은
-    해석이므로 enrich 의 일이다. 브랜드와 무관한 장소를 걸러내는 필터도 두지
-    않는다. 넣기로 하면 픽닷·모노맨션에도 같은 규칙으로 넣어야 하고, 그 판단은
-    실제 응답을 봐야 할 수 있다.
+    해석이므로 enrich 의 일이다. 다만 계열이 아닌 장소는 뺀다. BRAND_NAMES 의
+    주석을 참고한다.
 
     persist 를 끄면 S3에 적재하지 않는다. 파싱만 확인할 때 쓴다.
     """
@@ -84,7 +112,12 @@ def harufilm_stores(
         logger.info("'%s' 검색 %d건 (total_count %d)", query, len(found), expected)
 
     merged = list(documents.values())
-    stores = parse_stores(merged, platform=Platform.HARU_FILM)
+
+    branches, dropped = _split_branches(merged, names=BRAND_NAMES)
+    if dropped:
+        logger.info("계열이 아니라 뺀 장소 %d건: %s", len(dropped), dropped)
+
+    stores = parse_stores(branches, platform=Platform.HARU_FILM)
 
     if not stores:
         raise ValueError(
@@ -105,6 +138,8 @@ def harufilm_stores(
     if persist:
         # 원문은 사각형마다 나뉜 응답을 id로 합친 것이다. 우리가 쓰지 않는
         # category_name이나 place_url까지 들어 있어 나중에 되짚을 수 있다.
+        # 걸러내기 전을 담는다. 뺀 것이 무엇이었는지 원문에 남아 있어야
+        # 필터가 과했는지 나중에 확인할 수 있다.
         put_raw(
             json.dumps(merged, ensure_ascii=False),
             platform=Platform.HARU_FILM,
