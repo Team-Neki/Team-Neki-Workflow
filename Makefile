@@ -59,7 +59,7 @@ photosignature: ## 포토시그니처 지점을 수집한다
 	stores = photosignature_stores(); \
 	print('수집', len(stores), '건')"
 
-photogray: ## 포토그레이 지점을 수집한다
+photogray: ## 포토그레이 지점을 수집한다 (KAKAO_API_KEY 필요)
 	@$(UV) run python -c "\
 	from flows.photogray_stores import photogray_stores; \
 	stores = photogray_stores(); \

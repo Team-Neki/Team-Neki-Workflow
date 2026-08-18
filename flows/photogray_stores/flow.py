@@ -1,99 +1,71 @@
-"""포토그레이 지점 목록을 페이지별로 수집한다."""
+"""포토그레이 지점 목록을 Kakao 장소검색으로 수집한다.
 
-import time
-from collections import Counter
+사이트 게시판(photogray.com/photodb/board.php)에도 249곳이 있지만 좌표를 주지
+않는다. 목록 HTML에는 주소 문자열(data-addr)뿐이고, 지도는 지점을 누를 때
+브라우저가 그 주소를 Kakao 지오코더에 넣어 그린다. 사이트도 좌표를 모른다.
+
+좌표가 후속 단계에서 가장 중요한 값이라 수집원 자체를 Kakao로 옮겼다. 픽닷,
+모노맨션과 같은 경로이고 여기서도 받아온 값을 해석하지 않는다.
+
+Kakao가 아는 포토그레이는 223곳으로 사이트 목록보다 26곳 적다. 그만큼은
+수집되지 않는다. 이 차이를 감수하는 대신 전 건에 좌표가 붙는다.
+"""
+
+import json
 
 from prefect import flow, get_run_logger
 
+from flows.common.kakao import parse_stores, search_all
 from flows.common.output import log_stores
 from flows.common.platform import Platform
 from flows.common.storage import put_raw, put_stores
 from flows.common.store import CollectedStore
-from flows.photogray_stores.stores import (
-    fetch_store_page,
-    parse_stores,
-    parse_total_count,
-)
 
-# 100건씩 3페이지면 끝나지만 지점이 늘 수 있어 여유를 둔다.
-MAX_PAGES = 30
+# 표기를 바꿔도 더 나오지 않는다. PHOTOGRAY(217), 포토 그레이(223)를 각각
+# 돌려 합집합을 내봤지만 222건 그대로였고 전부 이 질의의 부분집합이었다.
+QUERY = "포토그레이"
 
 
 @flow(name="photogray-stores", log_prints=True)
-def photogray_stores(
-    max_pages: int = MAX_PAGES,
-    delay_seconds: float = 0.5,
-    persist: bool = True,
-) -> list[CollectedStore]:
-    """1페이지부터 순회하며 지점을 모은다.
+def photogray_stores(query: str = QUERY, persist: bool = True) -> list[CollectedStore]:
+    """좌표 사각형을 쪼개가며 전량을 받아온다.
 
-    범위를 벗어난 페이지는 빈 목록을 준다. 인생네컷처럼 마지막 페이지를
-    되돌려주지 않으므로 빈 응답으로 종료를 판정한다.
+    223곳이라 한 질의로 꺼낼 수 있는 45건을 넘으므로 search_all이 사각형을
+    나눠 내려간다.
 
     persist를 끄면 S3에 적재하지 않는다. 파싱만 확인할 때 쓴다.
     """
     logger = get_run_logger()
 
-    collected: list[CollectedStore] = []
-    pages: list[tuple[int, str]] = []
-    total: int | None = None
+    documents, expected = search_all(query)
+    stores = parse_stores(documents, platform=Platform.PHOTO_GRAY)
 
-    for page in range(1, max_pages + 1):
-        if page > 1 and delay_seconds > 0:
-            time.sleep(delay_seconds)
-
-        html = fetch_store_page(page)
-        pages.append((page, html))
-
-        if page == 1:
-            total = parse_total_count(html)
-
-        stores = parse_stores(html)
-
-        if not stores:
-            logger.info("page %d: 항목이 없어 종료합니다.", page)
-            break
-
-        collected.extend(stores)
-        logger.info("page %d: %d건 (누적 %d건)", page, len(stores), len(collected))
-    else:
-        logger.warning(
-            "상한 %d 페이지에 도달했습니다. 종료 조건을 확인해야 합니다.", max_pages
-        )
-
-    # 원문을 먼저 남긴다. 아래 검사에 걸려 예외로 빠져나가더라도 그때 무엇을
-    # 받았는지 볼 수 있어야 한다.
-    if persist:
-        for number, html in pages:
-            put_raw(
-                html,
-                platform=Platform.PHOTO_GRAY,
-                name=f"page-{number:03d}.html",
-            )
-
-    # idx가 지점명이라 이름이 겹치면 다음 단계에서 한 지점이 다른 지점을
-    # 덮어쓴다. 조용히 사라지게 두지 않고 여기서 막는다.
-    duplicated = sorted(
-        name for name, count in Counter(s.idx for s in collected).items() if count > 1
-    )
-    if duplicated:
+    if not stores:
         raise ValueError(
-            f"지점명이 겹칩니다: {duplicated}. 지점명을 식별자로 쓰므로 "
-            "겹치면 지점이 사라집니다."
+            f"'{query}' 검색 결과가 없습니다. 질의어나 API 키를 확인해야 합니다."
         )
 
-    log_stores(collected, label="포토그레이")
+    log_stores(stores, label="포토그레이")
 
-    if total is not None and len(collected) < total:
+    # total_count는 노출 상한과 무관하게 실제 개수를 알려준다. 분할이 어딘가에서
+    # 덜 내려갔다면 여기서 드러난다.
+    if len(stores) < expected:
         logger.warning(
-            "목록은 총 %d건이라고 하는데 %d건만 모았습니다. 페이지 순회가 덜 "
-            "내려갔거나 파서가 항목을 놓쳤을 수 있습니다.",
-            total,
-            len(collected),
+            "수집 %d건이 total_count %d건에 못 미칩니다. 분할이 부족했을 수 "
+            "있습니다.",
+            len(stores),
+            expected,
         )
 
     if persist:
-        put_stores(collected, platform=Platform.PHOTO_GRAY)
+        # 원문은 사각형마다 나뉜 응답을 id로 합친 것이다. 우리가 쓰지 않는
+        # category_name이나 place_url까지 들어 있어 나중에 되짚을 수 있다.
+        put_raw(
+            json.dumps(documents, ensure_ascii=False),
+            platform=Platform.PHOTO_GRAY,
+            name="documents.json",
+        )
+        put_stores(stores, platform=Platform.PHOTO_GRAY)
 
-    logger.info("수집 완료: 지점 %d건 (목록 표기 %s건)", len(collected), total)
-    return collected
+    logger.info("수집 완료: 지점 %d건 (total_count %d)", len(stores), expected)
+    return stores

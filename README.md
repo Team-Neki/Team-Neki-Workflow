@@ -195,7 +195,7 @@ make
   hello           hello 워크플로를 실행한다
   lifefourcuts    인생네컷 지점을 수집한다
   photosignature  포토시그니처 지점을 수집한다
-  photogray       포토그레이 지점을 수집한다
+  photogray       포토그레이 지점을 수집한다 (KAKAO_API_KEY 필요)
   planbstudio     플랜비스튜디오 지점을 수집한다
   picdot          픽닷 지점을 수집한다 (KAKAO_API_KEY 필요)
   monomansion     모노맨션 지점을 수집한다 (KAKAO_API_KEY 필요)
@@ -275,7 +275,7 @@ make picdot
 make monomansion
 ```
 
-`picdot`과 `monomansion`은 Kakao Local API를 호출하므로 `KAKAO_API_KEY`가 필요합니다. `.env`에 넣어두면
+`picdot`, `monomansion`, `photogray`는 Kakao Local API를 호출하므로 `KAKAO_API_KEY`가 필요합니다. `.env`에 넣어두면
 `make`가 알아서 읽습니다. `uv run`은 `.env`를 자동으로 읽지 않으므로, Makefile을 거치지
 않고 직접 실행할 때는 `uv run --env-file .env ...`로 지정해야 합니다.
 
