@@ -195,9 +195,12 @@ make
   hello           hello 워크플로를 실행한다
   lifefourcuts    인생네컷 지점을 수집한다
   photosignature  포토시그니처 지점을 수집한다
+  photogray       포토그레이 지점을 수집한다 (KAKAO_API_KEY 필요)
   planbstudio     플랜비스튜디오 지점을 수집한다
   picdot          픽닷 지점을 수집한다 (KAKAO_API_KEY 필요)
   monomansion     모노맨션 지점을 수집한다 (KAKAO_API_KEY 필요)
+  harufilm        하루필름 지점을 수집한다 (KAKAO_API_KEY 필요)
+  photolabplus    포토랩플러스 지점을 수집한다 (KAKAO_API_KEY 필요)
   broomstudio     비룸스튜디오 지점을 수집한다 (KAKAO_API_KEY 필요)
   collect         전체 브랜드를 병렬로 수집한다
   localstack      로컬 S3(LocalStack)를 띄운다
@@ -269,19 +272,28 @@ LocalStack 표준 포트는 4566입니다. 다른 프로젝트가 이미 쓰고 
 make hello
 make lifefourcuts
 make photosignature
+make photogray
 make planbstudio
 make picdot
 make monomansion
+make harufilm
+make photolabplus
 make broomstudio
 ```
 
-`picdot`, `monomansion`, `broomstudio`는 Kakao Local API를 호출하므로 `KAKAO_API_KEY`가
-필요합니다. `.env`에 넣어두면 `make`가 알아서 읽습니다. `uv run`은 `.env`를 자동으로 읽지
-않으므로, Makefile을 거치지 않고 직접 실행할 때는 `uv run --env-file .env ...`로 지정해야
-합니다.
+`picdot`, `monomansion`, `photogray`, `harufilm`, `photolabplus`, `broomstudio`는
+Kakao Local API를 호출하므로 `KAKAO_API_KEY`가 필요합니다. `.env`에 넣어두면
+`make`가 알아서 읽습니다. `uv run`은 `.env`를 자동으로 읽지 않으므로, Makefile을 거치지
+않고 직접 실행할 때는 `uv run --env-file .env ...`로 지정해야 합니다.
 
 Kakao Developers에서 앱을 만들고 `앱` > `플랫폼 키` > **REST API 키**를 씁니다.
 서버 호출용이라 플랫폼 등록이나 비즈 앱 전환은 필요 없습니다.
+
+포토랩플러스는 사이트에 지점 목록이 있는데도 Kakao를 씁니다. 지역 탭이 무규칙한
+`iframe`(`tab000`, `tab00`)으로 나뉘어 있고 사람이 손으로 만든 텍스트 위젯이라
+주소가 두 줄로 쪼개진 항목이 있으며, 무엇보다 제주 지점 주소로 서울 주소가 들어가
+있는 등 **사이트가 틀린 값을 줍니다.** 자세한 근거는
+`flows/photolabplus_stores/flow.py`의 docstring에 있습니다.
 
 비룸스튜디오는 브랜드 사이트가 아니라 Kakao 장소검색만이 수집원입니다.
 `broomstudio.co.kr`이 `www`, `m` 서브도메인까지 모두 NXDOMAIN이라 긁을 사이트가
@@ -289,7 +301,7 @@ Kakao Developers에서 앱을 만들고 `앱` > `플랫폼 키` > **REST API 키
 목록으로 받습니다. 기본값은 공백 없는 표기이며, 어느 쪽이 전량을 잡는지는 키를
 확보한 뒤 `total_count`로 확인해야 합니다.
 
-모든 수집 워크플로가 결과를 S3에 적재하므로 `make localstack`이 먼저 떠 있어야
+지점 수집 워크플로는 모두 결과를 S3에 적재하므로 `make localstack`이 먼저 떠 있어야
 합니다. 적재 없이 파싱만 확인하려면 `persist`를 끕니다.
 
 ```bash
