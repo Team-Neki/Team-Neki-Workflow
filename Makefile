@@ -22,7 +22,7 @@ PREFECT_ENV = PREFECT_API_URL=$(API_URL)
 
 .DEFAULT_GOAL := help
 .PHONY: help setup check hello lifefourcuts photosignature photogray planbstudio \
-	picdot monomansion collect localstack localstack-down s3-init s3-ls serve \
+	picdot monomansion harufilm collect localstack localstack-down s3-init s3-ls serve \
 	server deploy build clean
 
 help: ## 명령 목록을 출력한다
@@ -81,6 +81,12 @@ monomansion: ## 모노맨션 지점을 수집한다 (KAKAO_API_KEY 필요)
 	@$(UV) run python -c "\
 	from flows.monomansion_stores import monomansion_stores; \
 	stores = monomansion_stores(); \
+	print('수집', len(stores), '건')"
+
+harufilm: ## 하루필름 지점을 수집한다 (KAKAO_API_KEY 필요)
+	@$(UV) run python -c "\
+	from flows.harufilm_stores import harufilm_stores; \
+	stores = harufilm_stores(); \
 	print('수집', len(stores), '건')"
 
 collect: ## 전체 브랜드를 병렬로 수집한다 (KAKAO_API_KEY, S3 필요)
