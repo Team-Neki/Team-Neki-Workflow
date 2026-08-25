@@ -73,8 +73,9 @@ UI나 cron이 워크플로를 직접 실행하지 않습니다. flow run 레코�
 출력이 브랜드마다 달라지고, 그러면 enrich가 4개를 한 번에 받지 못합니다.
 
 지오코딩 같은 외부 API 보강은 enrich에 모읍니다. 수집 flow에 붙이면 Kakao 장애가
-수집 실패가 되고, 색인 규칙을 고칠 때마다 크롤링이 따라 돕니다. 픽닷과 모노맨션은
-수집원 자체가 Kakao라 예외지만, 이 경우에도 받아온 값을 해석하지는 않습니다.
+수집 실패가 되고, 색인 규칙을 고칠 때마다 크롤링이 따라 돕니다. 픽닷과 모노맨션,
+포토그레이는 수집원 자체가 Kakao라 예외지만, 이 경우에도 받아온 값을 해석하지는
+않습니다.
 
 ### Kakao 장소검색의 45건 상한
 
@@ -368,6 +369,7 @@ make localstack
 make hello
 make lifefourcuts
 make photosignature
+make photogray
 make planbstudio
 make picdot
 make monomansion
