@@ -20,6 +20,7 @@ from flows.harufilm_stores import harufilm_stores
 from flows.lifefourcuts_stores import lifefourcuts_stores
 from flows.monomansion_stores import monomansion_stores
 from flows.photogray_stores import photogray_stores
+from flows.photoism_stores import photoism_stores
 from flows.photolabplus_stores import photolabplus_stores
 from flows.photosignature_stores import photosignature_stores
 from flows.picdot_stores import picdot_stores
@@ -27,6 +28,7 @@ from flows.planbstudio_stores import planbstudio_stores
 
 BRANDS: dict[Platform, Callable[..., list[Any]]] = {
     Platform.LIFE_FOUR_CUT: lifefourcuts_stores,
+    Platform.PHOTOISM: photoism_stores,
     Platform.PHOTO_SIGNATURE: photosignature_stores,
     Platform.PHOTO_GRAY: photogray_stores,
     Platform.PLANB_STUDIO: planbstudio_stores,
