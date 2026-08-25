@@ -16,6 +16,7 @@ from prefect import flow, get_run_logger
 from flows.broomstudio_stores import broomstudio_stores
 from flows.common.platform import Platform
 from flows.common.storage import latest_dt, put_run_manifest, read_manifest, today
+from flows.dontlxxkup_stores import dontlxxkup_stores
 from flows.harufilm_stores import harufilm_stores
 from flows.lifefourcuts_stores import lifefourcuts_stores
 from flows.monomansion_stores import monomansion_stores
@@ -29,6 +30,7 @@ from flows.planbstudio_stores import planbstudio_stores
 BRANDS: dict[Platform, Callable[..., list[Any]]] = {
     Platform.LIFE_FOUR_CUT: lifefourcuts_stores,
     Platform.PHOTOISM: photoism_stores,
+    Platform.DONT_LXXK_UP: dontlxxkup_stores,
     Platform.PHOTO_SIGNATURE: photosignature_stores,
     Platform.PHOTO_GRAY: photogray_stores,
     Platform.PLANB_STUDIO: planbstudio_stores,
