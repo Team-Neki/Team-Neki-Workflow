@@ -22,8 +22,8 @@ PREFECT_ENV = PREFECT_API_URL=$(API_URL)
 
 .DEFAULT_GOAL := help
 .PHONY: help setup check hello lifefourcuts photosignature photogray planbstudio \
-	picdot monomansion harufilm photolabplus collect localstack localstack-down \
-	s3-init s3-ls serve server deploy build clean
+	picdot monomansion harufilm photolabplus broomstudio collect localstack \
+	localstack-down s3-init s3-ls serve server deploy build clean
 
 help: ## 명령 목록을 출력한다
 	@echo "사용법: make <명령>"
@@ -93,6 +93,12 @@ photolabplus: ## 포토랩플러스 지점을 수집한다 (KAKAO_API_KEY 필요
 	@$(UV) run python -c "\
 	from flows.photolabplus_stores import photolabplus_stores; \
 	stores = photolabplus_stores(); \
+	print('수집', len(stores), '건')"
+
+broomstudio: ## 비룸스튜디오 지점을 수집한다 (KAKAO_API_KEY 필요)
+	@$(UV) run python -c "\
+	from flows.broomstudio_stores import broomstudio_stores; \
+	stores = broomstudio_stores(); \
 	print('수집', len(stores), '건')"
 
 collect: ## 전체 브랜드를 병렬로 수집한다 (KAKAO_API_KEY, S3 필요)

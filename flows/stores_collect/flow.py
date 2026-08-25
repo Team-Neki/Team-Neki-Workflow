@@ -13,6 +13,7 @@ from typing import Any, Callable
 
 from prefect import flow, get_run_logger
 
+from flows.broomstudio_stores import broomstudio_stores
 from flows.common.platform import Platform
 from flows.common.storage import latest_dt, put_run_manifest, read_manifest, today
 from flows.harufilm_stores import harufilm_stores
@@ -33,6 +34,7 @@ BRANDS: dict[Platform, Callable[..., list[Any]]] = {
     Platform.MONO_MANSION: monomansion_stores,
     Platform.HARU_FILM: harufilm_stores,
     Platform.PHOTO_LAB_PLUS: photolabplus_stores,
+    Platform.BROOM_STUDIO: broomstudio_stores,
 }
 
 # 이보다 오래된 데이터로는 대신하지 않는다. 무한정 대신하면 파서가 깨진 채로
