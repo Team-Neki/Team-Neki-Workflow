@@ -13,7 +13,9 @@
 부스를 찾는 것이 목적이므로 접지 않고 그대로 담는다.
 
 **원문이 주는 열을 다 담지 않는다.** 쓰임이 역명 검색과 좌표 두 가지뿐이라 영문명,
-주소, 운영기관, 전화번호, 환승역구분, 데이터기준일자는 읽지 않는다. 지점 수집에서
+주소, 운영기관, 전화번호, 환승역구분, 데이터기준일자는 읽지 않는다. 역번호와
+노선번호도 마찬가지다. 원문 스스로가 유일하게 지키지 못해(`I4108` 하나에 경의중앙선과
+경춘선) 키가 못 되고, 검색에도 반경에도 쓰이지 않는다. 지점 수집에서
 픽닷이 지번 주소를 공짜로 받으면서도 담지 않는 것과 같은 기준이다. 쓰지 않는 값을
 담으면 그 값이 틀렸을 때 누가 책임지는지가 흐려지고, 원문이 바뀔 때 따라 고칠 것만
 늘어난다.
@@ -43,15 +45,11 @@ USER_AGENT = (
 # 실패해도 200 에 HTML 이 올 수 있다. xlsx 는 zip 이므로 앞 두 바이트로 가른다.
 ZIP_MAGIC = b"PK"
 
-# 헤더 첫 열 이름. 시트 구조가 바뀌면 여기서 걸린다.
-HEADER = "역번호"
-
 # 원문 열 이름 -> 우리 필드. 열 순서에 기대지 않는다. 순서로 읽으면 가운데에 열이
-# 하나 끼었을 때 값이 통째로 한 칸씩 밀린 채로 조용히 적재된다.
+# 하나 끼었을 때 값이 통째로 한 칸씩 밀린 채로 조용히 적재된다. 시트가 바뀌면
+# 여기 없는 열을 찾다가 걸린다.
 FIELDS = {
-    "역번호": "station_no",
     "역사명": "name",
-    "노선번호": "line_no",
     "노선명": "line_name",
     "역위도": "lat",
     "역경도": "lon",
@@ -66,9 +64,7 @@ class SourceStation:
     손대지 않는다. 고치는 것은 `normalize` 의 일이다.
     """
 
-    station_no: str
     name: str
-    line_no: str
     line_name: str
     lat: float
     lon: float
@@ -77,9 +73,8 @@ class SourceStation:
 def _text(value: object) -> str:
     """셀 하나를 문자열로.
 
-    **역번호가 str 652 / int 447 로 섞여 온다.** 숫자로 읽으면 `'0736'` 의 앞 0 이
-    날아가 같은 노선의 다른 역과 부딪히므로 문자열로 통일한다. 정수로 온 값은
-    파일 안에서 이미 앞 0 이 없는 값이라 `str()` 로 충분하다.
+    openpyxl 이 열마다 다른 타입을 돌려준다. `1.0` 이 `'1.0'` 으로 새지 않게
+    정수인 실수는 소수점을 떼고 넘긴다.
     """
     if value is None:
         return ""
@@ -149,15 +144,13 @@ def parse_rows(body: bytes) -> list[SourceStation]:
     rows = sheet.iter_rows(values_only=True)
 
     header = [_text(cell) for cell in next(rows, ())]
-    if HEADER not in header:
-        raise ValueError(
-            f"헤더에 {HEADER!r} 가 없습니다. 시트 구조가 바뀌었을 수 있습니다: "
-            f"{header[:8]}"
-        )
 
     missing = [name for name in FIELDS if name not in header]
     if missing:
-        raise ValueError(f"원문에 없는 열이 있습니다: {missing}")
+        raise ValueError(
+            f"원문에 없는 열이 있습니다: {missing}. 시트 구조가 바뀌었을 수 "
+            f"있습니다: {header[:8]}"
+        )
 
     index = {name: header.index(name) for name in FIELDS}
 
@@ -184,9 +177,7 @@ def parse_rows(body: bytes) -> list[SourceStation]:
 
         stations.append(
             SourceStation(
-                station_no=_text(cell("역번호")),
                 name=name,
-                line_no=_text(cell("노선번호")),
                 line_name=_text(cell("노선명")),
                 lat=latitude,
                 lon=longitude,

@@ -57,8 +57,6 @@ LOCK_TIMEOUT = "5s"
 COLUMNS = (
     "name",
     "line_name",
-    "line_no",
-    "station_no",
     "location",
 )
 
@@ -70,6 +68,7 @@ def staging_name(day: date) -> str:
 
 def _ddl(staging: str) -> str:
     """길이는 실측에 여유를 둔 값이다. 1,098행에서 name 16자, line_name 14자였다.
+    담는 것은 셋뿐이다.
 
     **원문이 주는 열을 다 담지 않는다.** 쓰임이 역명 검색과 좌표 두 가지뿐이라
     영문명, 주소, 운영기관, 전화번호, 환승역구분, 데이터기준일자는 담지 않는다.
@@ -81,9 +80,9 @@ def _ddl(staging: str) -> str:
     연번은 COPY 순서로 매겨지므로 원문 앞쪽에 역이 하나만 생겨도 그 뒤 전부가 한 칸씩
     밀리고, 앱이 들고 있던 id 가 조용히 다른 역을 가리키게 된다. 실측으로 확인했다.
 
-    원문 식별자 `(line_no, station_no)` 도 키가 못 된다. `I4108` 하나에 경의중앙선과
-    경춘선이 매달려 있어 4건이 부딪히고, 그것으로 키를 잡으면 `광운대 경춘선` 이
-    검색에서 사라진다.
+    원문 식별자(역번호, 노선번호)는 담지 않는다. `I4108` 하나에 경의중앙선과 경춘선이
+    매달려 있어 키가 못 되고, 그것으로 키를 잡으면 `광운대 경춘선` 이 검색에서
+    사라진다. 키가 아닌 데다 검색에도 반경에도 쓰이지 않으므로 남길 이유가 없다.
 
     다음 스냅샷에서 `(name, line_name)` 충돌이 생기면 PK 위반으로 트랜잭션이 통째로
     롤백되어 기존 테이블이 살아남는다. 조용히 틀리는 것보다 낫다.
@@ -94,10 +93,6 @@ CREATE TABLE {staging} (
     -- 신분당선 중 하나를 고른다.
     name        VARCHAR(60)   NOT NULL,
     line_name   VARCHAR(40)   NOT NULL,
-
-    -- 원문 식별자. 원문 스스로가 유일하게 지키지 못해 값으로만 담는다.
-    line_no     VARCHAR(10),
-    station_no  VARCHAR(10),
 
     -- 고른 역 1km 안의 부스를 찾는 기준. 이 데이터의 쓸모다.
     --
@@ -136,8 +131,6 @@ def _comments(staging: str) -> str:
     return f"""
 COMMENT ON COLUMN {staging}.name IS '역명, 끝의 역 을 뗀 형태 (예: 강남). 검색용';
 COMMENT ON COLUMN {staging}.line_name IS '노선명 (예: 2호선, 신분당선). 검색 결과 표시용';
-COMMENT ON COLUMN {staging}.line_no IS '원문 노선번호. 노선을 유일하게 식별하지 못한다';
-COMMENT ON COLUMN {staging}.station_no IS '원문 역번호. 노선 안에서도 유일하지 않다';
 COMMENT ON COLUMN {staging}.location IS '역 좌표 (SRID 4326). 근처 부스를 찾는 기준';
 """
 
@@ -185,8 +178,6 @@ def swap_table(stations: list[Station], *, dataset: str = "") -> dict[str, int]:
                         (
                             station.name,
                             station.line_name,
-                            station.line_no,
-                            station.station_no,
                             f"SRID=4326;POINT({station.lon} {station.lat})",
                         )
                     )

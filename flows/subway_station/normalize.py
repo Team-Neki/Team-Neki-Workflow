@@ -63,14 +63,12 @@ class Station:
     COPY 순서로 매겨지는데, 원문 앞쪽에 역이 하나만 생겨도 그 뒤 전부가 한 칸씩
     밀린다. 앱이 들고 있던 id 가 조용히 다른 역을 가리키게 된다.
 
-    `line_no` 와 `station_no` 는 원문 식별자를 값으로만 담은 것이다. 원문 스스로가
-    유일하게 지키지 못해(`I4108` 하나에 경의중앙선과 경춘선) 키로 쓸 수 없다.
+    담는 것은 이 넷이 전부다. 원문 식별자(역번호, 노선번호)는 담지 않는다. 원문
+    스스로가 유일하게 지키지 못해 키가 못 되고, 검색에도 반경에도 쓰이지 않는다.
     """
 
     name: str
     line_name: str
-    line_no: str | None
-    station_no: str | None
     lat: float
     lon: float
 
@@ -94,14 +92,6 @@ def clean_line(value: str) -> str:
     """노선명의 공백을 고르고 같은 노선의 다른 표기를 합친다."""
     text = re.sub(r"\s+", " ", value).strip()
     return LINE_ALIAS.get(text, text)
-
-
-def _blank_to_none(value: str) -> str | None:
-    """빈 문자열을 NULL 로 맞춘다.
-
-    `''` 가 그대로 담기면 다음 단계가 값이 있는 줄로 오해한다.
-    """
-    return value or None
 
 
 @task
@@ -129,14 +119,7 @@ def normalize(rows: list[SourceStation]) -> list[Station]:
             merged_lines += 1
 
         groups[(name, line_name)].append(
-            Station(
-                name=name,
-                line_name=line_name,
-                line_no=_blank_to_none(row.line_no),
-                station_no=_blank_to_none(row.station_no),
-                lat=row.lat,
-                lon=row.lon,
-            )
+            Station(name=name, line_name=line_name, lat=row.lat, lon=row.lon)
         )
 
     stations: list[Station] = []
@@ -145,16 +128,13 @@ def normalize(rows: list[SourceStation]) -> list[Station]:
     for (name, line_name), candidates in groups.items():
         if len(candidates) > 1:
             # 원문 순서에 기대지 않는다. 임의로 첫 행을 집으면 원문 순서가 바뀔 때
-            # 남는 행이 조용히 달라진다.
-            candidates = sorted(
-                candidates, key=lambda s: (s.line_no or "", s.station_no or "")
-            )
-            dropped = ", ".join(
-                f"{s.line_no}/{s.station_no}" for s in candidates[1:]
-            )
+            # 남는 행이 조용히 달라진다. 좌표까지 같은 경우가 대부분이라 어느 쪽이
+            # 남든 값은 같지만, 같은 실행이 같은 답을 내는 것이 중요하다.
+            candidates = sorted(candidates, key=lambda s: (s.lat, s.lon))
+            dropped = ", ".join(f"({s.lat}, {s.lon})" for s in candidates[1:])
             collapsed.append(
                 f"{name} {line_name} <- {dropped} "
-                f"(남긴 것 {candidates[0].line_no}/{candidates[0].station_no})"
+                f"(남긴 것 ({candidates[0].lat}, {candidates[0].lon}))"
             )
 
         stations.append(candidates[0])
@@ -166,7 +146,7 @@ def normalize(rows: list[SourceStation]) -> list[Station]:
         len(collapsed),
     )
 
-    # 합쳐진 것은 원문 식별자가 하나 버려졌다는 뜻이라 전부 남긴다.
+    # 합쳐진 것은 원문이 같은 역을 두 번 실었다는 뜻이라 전부 남긴다.
     for line in collapsed:
         logger.info("  합침 %s", line)
 
