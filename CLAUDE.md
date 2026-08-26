@@ -354,15 +354,33 @@ GET https://data.kric.go.kr/rips/dataset/download.file?type=filedata&id=32&opera
 `한국철도공사`처럼 전국을 도는 기관이 있으므로 **운영기관으로 시도를 정하는 것은
 주소에 없을 때뿐입니다.**
 
-#### 검색과 반경은 인덱스가 다릅니다
+#### 좌표는 부스 테이블과 같은 모양으로 담습니다
 
-- 검색 : `name`에 `text_pattern_ops`. 법정동과 같은 이유입니다
-- 반경 : `lat`과 `lon`에 **각각** 겁니다. `(lat, lon)` 복합 B-tree 는 첫 열로만
-  줄이고 둘째 열을 필터로 쓰므로 근접 질의에 거의 먹지 않습니다
+위경도를 컬럼으로 두지 않고 `location geometry(POINT, 4326)` 하나로 담습니다.
+`tb_photo_booth_location`이 이미 그렇게 하고 `ST_X` / `ST_Y`로 돌려주고 있어
+맞춘 것입니다. PostGIS 는 Team-Neki-Server 의 Flyway 가 이미 들여놓았으므로
+확장 설치를 우리가 걱정할 일이 아닙니다.
 
-bounding box 로 후보를 줄이고 하버사인으로 거릅니다. PostGIS `geography` + GiST 가
-정석이지만 확장 설치 권한이 필요하고 1,098행 규모에서는 차이가 없습니다. 매핑을
-붙이는 쪽에서 실측하고 느리면 그때 검토합니다.
+반경 계산에서 두 테이블을 섞어 쓰는데 한쪽만 타입이 다르면 변환이 끼고, **변환이
+끼면 인덱스가 죽습니다.**
+
+**`location`에는 인덱스를 걸지 않습니다.** 반경 질의는 이 테이블이 아니라 부스
+테이블에 겁니다. 사용자가 고른 역의 좌표는 여기서 읽어 상수로 넘어가고, 그 상수로
+1km 안의 부스를 찾는 것은 `idx_photo_booth_location_location`(GiST)이 합니다.
+반대 방향(부스마다 가까운 역 찾기)이 생기면 그때 GiST 한 줄을 더합니다.
+
+인덱스는 `name`의 `text_pattern_ops` 하나뿐입니다. 법정동과 같은 이유입니다.
+
+**부스 컬럼이 `geography`가 아니라 SRID 4326 `geometry`입니다.** 거리 단위가
+미터가 아니라 도(degree)라서 `ST_DWithin(location, point, 1000)`은 1km 가 아닙니다.
+도 단위로 걸러낸 뒤 미터를 따로 확인해야 합니다.
+
+```sql
+WHERE ST_DWithin(b.location, s.location, 0.012)            -- 인덱스가 타는 자리
+  AND ST_DistanceSphere(b.location, s.location) <= 1000    -- 정확한 미터
+```
+
+`::geography` 로 캐스팅하면 미터가 바로 나오지만 기존 geometry GiST 를 타지 못합니다.
 
 역명은 끝의 `역`을 뗍니다. 원문이 1,099행 중 358행에만 붙여 놓아 그대로 두면
 "강남" 검색과 "강남역" 검색의 결과가 달라집니다. 표시할 때 붙이는 것은 앱의 일입니다.

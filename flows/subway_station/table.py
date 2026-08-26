@@ -60,8 +60,7 @@ COLUMNS = (
     "line_name",
     "line_no",
     "station_no",
-    "lat",
-    "lon",
+    "location",
     "region",
     "address",
     "operator",
@@ -99,8 +98,12 @@ CREATE TABLE {staging} (
     station_no  VARCHAR(10),
 
     -- 고른 역 1km 안의 부스를 찾는 기준. 이 데이터의 쓸모다.
-    lat         NUMERIC(9,6)  NOT NULL,
-    lon         NUMERIC(9,6)  NOT NULL,
+    --
+    -- 위경도를 컬럼으로 두지 않는다. tb_photo_booth_location 이 location 하나만
+    -- 들고 ST_X / ST_Y 로 돌려주고 있어 같은 모양으로 맞춘다. 반경 계산에서 두
+    -- 테이블을 섞어 쓰는데 한쪽만 타입이 다르면 변환이 끼고, 변환이 끼면 인덱스가
+    -- 죽는다.
+    location    geometry(POINT, 4326) NOT NULL,
 
     -- 동명이역이 19쌍 있다. 노선명만으로는 어느 송정인지 알기 어렵다.
     region      VARCHAR(20),
@@ -128,14 +131,13 @@ def _indexes(staging: str) -> str:
 -- 기본 연산자 클래스는 콜레이션에 묶여 접두 검색에 쓰이지 않는다.
 CREATE INDEX ON {staging} (name text_pattern_ops);
 
--- 고른 역 1km 안의 부스를 찾을 때 쓴다. bounding box 로 후보를 줄이고 하버사인으로
--- 거르는 방식이라 두 컬럼에 따로 건다. (lat, lon) 복합 B-tree 는 첫 열로만 줄이고
--- 둘째 열을 필터로 쓰므로 근접 질의에 거의 먹지 않는다.
+-- location 에는 인덱스를 걸지 않는다. 반경 질의는 이 테이블이 아니라 부스 테이블에
+-- 건다. 사용자가 고른 역의 좌표는 여기서 읽어 상수로 넘어가고, 그 상수로 반경 안의
+-- 부스를 찾는 것은 tb_photo_booth_location 의 GiST 가 한다. 실행 계획에서
+-- idx_photo_booth_location_location 이 잡히는 것을 확인했다.
 --
--- PostGIS geography + GiST 가 정석이지만 확장 설치 권한이 필요하고, 1,098행
--- 규모에서는 차이가 없다. 매핑을 붙이는 쪽에서 실측하고 느리면 그때 검토한다.
-CREATE INDEX ON {staging} (lat);
-CREATE INDEX ON {staging} (lon);
+-- 반대 방향(부스마다 가까운 역 찾기)이 생기면 그때 GiST 한 줄을 더한다. 없는 질의를
+-- 미리 최적화하면 스왑마다 인덱스를 만드는 값만 낸다.
 """
 
 
@@ -147,8 +149,7 @@ COMMENT ON COLUMN {staging}.name_en IS '영문 역명 (예: Gangnam)';
 COMMENT ON COLUMN {staging}.line_name IS '노선명 (예: 2호선, 신분당선). 검색 결과 표시용';
 COMMENT ON COLUMN {staging}.line_no IS '원문 노선번호. 노선을 유일하게 식별하지 못한다';
 COMMENT ON COLUMN {staging}.station_no IS '원문 역번호. 노선 안에서도 유일하지 않다';
-COMMENT ON COLUMN {staging}.lat IS '역 위도. 근처 부스를 찾는 기준';
-COMMENT ON COLUMN {staging}.lon IS '역 경도. 근처 부스를 찾는 기준';
+COMMENT ON COLUMN {staging}.location IS '역 좌표 (SRID 4326). 근처 부스를 찾는 기준';
 COMMENT ON COLUMN {staging}.region IS '시도 (예: 서울특별시). 동명이역 구분용';
 COMMENT ON COLUMN {staging}.address IS '역사 주소';
 COMMENT ON COLUMN {staging}.operator IS '운영기관명, 시도 접두를 뗀 형태';
@@ -204,8 +205,7 @@ def swap_table(stations: list[Station], *, dataset: str = "") -> dict[str, int]:
                             station.line_name,
                             station.line_no,
                             station.station_no,
-                            station.lat,
-                            station.lon,
+                            f"SRID=4326;POINT({station.lon} {station.lat})",
                             station.region,
                             station.address,
                             station.operator,
