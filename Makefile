@@ -23,7 +23,8 @@ PREFECT_ENV = PREFECT_API_URL=$(API_URL)
 .DEFAULT_GOAL := help
 .PHONY: help setup check hello lifefourcuts photoism dontlxxkup photosignature \
 	photogray planbstudio picdot monomansion harufilm photolabplus broomstudio \
-	collect localstack localstack-down s3-init s3-ls serve server deploy build clean
+	collect legal-dong localstack localstack-down s3-init s3-ls serve server \
+	deploy build clean
 
 help: ## 명령 목록을 출력한다
 	@echo "사용법: make <명령>"
@@ -119,6 +120,12 @@ collect: ## 전체 브랜드를 병렬로 수집한다 (KAKAO_API_KEY, S3 필요
 	results = stores_collect(); \
 	print('성공', sum(1 for r in results.values() if r['status'] == 'ok'), '건'); \
 	print('합계', sum(r.get('count', 0) for r in results.values()), '건')"
+
+legal-dong: ## 법정동 코드를 수집해 Postgres 에 적재한다 (DATABASE_URL 필요)
+	@$(UV) run python -c "\
+	from flows.legal_dong import legal_dong; \
+	dongs = legal_dong(); \
+	print('수집', len(dongs), '건')"
 
 # docker compose 는 .env 를 알아서 읽으므로 LOCALSTACK_PORT 가 그대로 먹는다.
 localstack: ## 로컬 S3(LocalStack)를 띄운다
