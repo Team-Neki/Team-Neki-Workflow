@@ -134,12 +134,12 @@ COMMENT ON COLUMN {staging}.level IS '계층 (1 시도, 2 시군구, 3 읍면동
 COMMENT ON COLUMN {staging}.sido_code IS '시도 코드 2자리';
 COMMENT ON COLUMN {staging}.sido_name IS '시도 명칭 (예: 서울특별시)';
 COMMENT ON COLUMN {staging}.sgg_code IS '시군구 코드 3자리. 시도 행은 000';
-COMMENT ON COLUMN {staging}.sgg_name IS '시군구 명칭 (예: 강남구). 세종특별자치시는 NULL';
+COMMENT ON COLUMN {staging}.sgg_name IS '시군구 명칭 (예: 강남구, 수원시 장안구). 세종특별자치시는 NULL';
 COMMENT ON COLUMN {staging}.umd_code IS '읍면동 코드 3자리. 시군구 이상 행은 000';
 COMMENT ON COLUMN {staging}.umd_name IS '읍/면/동 명칭 (예: 역삼동, 무장면). 시군구 이상 행은 NULL';
 COMMENT ON COLUMN {staging}.ri_code IS '리 코드 2자리. 리 아닌 행은 00';
 COMMENT ON COLUMN {staging}.ri_name IS '리 명칭 (예: 강남리). 리 아닌 행은 NULL';
-COMMENT ON COLUMN {staging}.leaf_name IS '가장 아래 계층의 명칭 (예: 역삼동, 강남구, 무장면). 검색용';
+COMMENT ON COLUMN {staging}.leaf_name IS '가장 아래 계층의 명칭 (예: 역삼동, 강남구, 장안구, 무장면). 검색용';
 COMMENT ON COLUMN {staging}.full_name IS '전체 명칭 (예: 서울특별시 강남구 역삼동). 표시용';
 COMMENT ON COLUMN {staging}.created_on IS '법정동 생성일';
 """

@@ -51,6 +51,11 @@ class LegalDong:
     딸려 나온다. `leaf_name` 으로 찾으면 `강남구`, (진주시) `강남동`,
     (고창군 무장면) `강남리` 셋만 남는다. 표시할 때는 어느 강남동인지 알려줘야
     하므로 다시 `full_name` 이 필요하다.
+
+    **특례시 일반구는 두 값이 갈린다.** `full_name` 은 `경기도 수원시 장안구`
+    인데 `leaf_name` 은 `장안구` 다. 원문이 `수원시장안구` 한 덩어리로 주므로
+    나눈 경계를 `leaf_name` 에도 쓰지 않으면 `수원시 장안구` 가 검색 키가 되어
+    "장안" 으로는 39개 일반구가 하나도 나오지 않는다.
     """
 
     code: str
@@ -93,12 +98,17 @@ def _sgg_names_by_sido(rows: list[SourceDong]) -> dict[str, set[str]]:
     return names
 
 
-def _split_sgg(name: str, siblings: set[str]) -> str:
+def _split_sgg(name: str, siblings: set[str]) -> tuple[str, str]:
     """같은 시도의 다른 시군구명이 접두면 그 경계에 공백을 넣는다.
 
     `수원시영통구` 는 형제 `수원시` 가 접두라서 `수원시 영통구` 가 된다.
     `군위군` 은 접두인 형제가 없어 그대로 둔다. 접두가 여럿이면 가장 긴 것을
     쓴다.
+
+    전체 표기와 뒷부분을 함께 돌려준다. 뒷부분이 그 구의 자기 이름이라
+    `leaf_name` 이 되는데, 경계를 아는 것은 여기뿐이다. 호출부가 공백으로 다시
+    쪼개면 원문이 처음부터 공백을 갖고 온 이름과 우리가 넣은 공백을 구분하지
+    못한다. 나누지 않은 이름은 둘이 같다.
     """
     prefixes = [
         other
@@ -106,10 +116,11 @@ def _split_sgg(name: str, siblings: set[str]) -> str:
         if other != name and name.startswith(other)
     ]
     if not prefixes:
-        return name
+        return name, name
 
     base = max(prefixes, key=len)
-    return f"{base} {name[len(base):]}"
+    tail = name[len(base):]
+    return f"{base} {tail}", tail
 
 
 @task
@@ -142,18 +153,29 @@ def normalize(rows: list[SourceDong]) -> list[LegalDong]:
 
     for row in rows:
         sgg_name: str | None = row.sgg_name or None
+        # 일반구는 표시할 이름과 자기 이름이 다르다. `수원시 장안구` 로 보여주되
+        # 검색은 `장안구` 로 걸려야 한다.
+        sgg_leaf = sgg_name
 
         if sgg_name and phantoms.get(row.sido_name) == sgg_name:
-            sgg_name = None
+            sgg_name = sgg_leaf = None
         elif sgg_name:
-            fixed = _split_sgg(sgg_name, siblings.get(row.sido_name, set()))
+            fixed, leaf = _split_sgg(
+                sgg_name, siblings.get(row.sido_name, set())
+            )
             if fixed != sgg_name:
                 split_count += 1
-                sgg_name = fixed
+            sgg_name, sgg_leaf = fixed, leaf
 
         parts = [
             part
             for part in (row.sido_name, sgg_name, row.umd_name, row.ri_name)
+            if part
+        ]
+        # 같은 계층을 자기 이름으로 바꿔 놓은 것. 시군구 자리만 다르다.
+        own = [
+            part
+            for part in (row.sido_name, sgg_leaf, row.umd_name, row.ri_name)
             if part
         ]
 
@@ -171,7 +193,7 @@ def normalize(rows: list[SourceDong]) -> list[LegalDong]:
                 ri_name=row.ri_name or None,
                 # 채워진 것 중 가장 아래가 자기 이름이다. 시도 행은 그것이 곧
                 # 시도명이다.
-                leaf_name=parts[-1],
+                leaf_name=own[-1],
                 full_name=" ".join(parts),
                 created_on=row.created_on,
             )
