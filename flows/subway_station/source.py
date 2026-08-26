@@ -12,6 +12,12 @@
 들어 있고, 그 둘의 좌표도 조금 다르다. 사용자가 `강남역 신분당선` 을 골라 그 근처
 부스를 찾는 것이 목적이므로 접지 않고 그대로 담는다.
 
+**원문이 주는 열을 다 담지 않는다.** 쓰임이 역명 검색과 좌표 두 가지뿐이라 영문명,
+주소, 운영기관, 전화번호, 환승역구분, 데이터기준일자는 읽지 않는다. 지점 수집에서
+픽닷이 지번 주소를 공짜로 받으면서도 담지 않는 것과 같은 기준이다. 쓰지 않는 값을
+담으면 그 값이 틀렸을 때 누가 책임지는지가 흐려지고, 원문이 바뀔 때 따라 고칠 것만
+늘어난다.
+
 이름 교정은 여기서 하지 않는다. 여기는 사이트가 준 것만 담고 `normalize` 가 고친다.
 값이 틀렸을 때 누구 잘못인가로 가르면 여기까지는 사이트 잘못이다.
 """
@@ -19,7 +25,6 @@
 import io
 import re
 from dataclasses import dataclass
-from datetime import date, datetime
 
 import httpx
 import openpyxl
@@ -48,14 +53,8 @@ FIELDS = {
     "역사명": "name",
     "노선번호": "line_no",
     "노선명": "line_name",
-    "영문역사명": "name_en",
-    "환승역구분": "transfer",
     "역위도": "lat",
     "역경도": "lon",
-    "운영기관명": "operator",
-    "역사도로명주소": "address",
-    "역사전화번호": "phone",
-    "데이터기준일자": "base_on",
 }
 
 
@@ -71,14 +70,8 @@ class SourceStation:
     name: str
     line_no: str
     line_name: str
-    name_en: str
-    transfer: str
     lat: float
     lon: float
-    operator: str
-    address: str
-    phone: str
-    base_on: date | None
 
 
 def _text(value: object) -> str:
@@ -93,30 +86,6 @@ def _text(value: object) -> str:
     if isinstance(value, float) and value.is_integer():
         return str(int(value))
     return str(value).strip()
-
-
-def _parse_base_on(value: object) -> date | None:
-    """데이터기준일자. str 1,063 / datetime 33 / int 3 으로 섞여 온다.
-
-    셋 다 받아내되 못 읽으면 `None` 이다. 이 값으로 무엇을 거르지 않으므로 한 칸
-    비는 것이 파싱을 멈출 이유가 되지 않는다.
-    """
-    if isinstance(value, datetime):
-        return value.date()
-    if isinstance(value, date):
-        return value
-
-    text = _text(value)
-    if not text:
-        return None
-
-    digits = re.sub(r"\D", "", text)
-    if len(digits) != 8:
-        return None
-    try:
-        return date(int(digits[:4]), int(digits[4:6]), int(digits[6:8]))
-    except ValueError:
-        return None
 
 
 @task(retries=3, retry_delay_seconds=[10, 30, 60])
@@ -219,14 +188,8 @@ def parse_rows(body: bytes) -> list[SourceStation]:
                 name=name,
                 line_no=_text(cell("노선번호")),
                 line_name=_text(cell("노선명")),
-                name_en=_text(cell("영문역사명")),
-                transfer=_text(cell("환승역구분")),
                 lat=latitude,
                 lon=longitude,
-                operator=_text(cell("운영기관명")),
-                address=_text(cell("역사도로명주소")),
-                phone=_text(cell("역사전화번호")),
-                base_on=_parse_base_on(cell("데이터기준일자")),
             )
         )
 

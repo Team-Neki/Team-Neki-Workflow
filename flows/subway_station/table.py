@@ -56,17 +56,10 @@ LOCK_TIMEOUT = "5s"
 # 값이 엉뚱한 컬럼에 들어간다. id 는 BIGSERIAL 이라 넘기지 않는다.
 COLUMNS = (
     "name",
-    "name_en",
     "line_name",
     "line_no",
     "station_no",
     "location",
-    "region",
-    "address",
-    "operator",
-    "phone",
-    "is_transfer",
-    "base_on",
 )
 
 
@@ -76,8 +69,11 @@ def staging_name(day: date) -> str:
 
 
 def _ddl(staging: str) -> str:
-    """길이는 실측에 여유를 둔 값이다. 1,098행에서 name 9자, name_en 22자,
-    line_name 12자, address 33자, operator 16자였다.
+    """길이는 실측에 여유를 둔 값이다. 1,098행에서 name 16자, line_name 14자였다.
+
+    **원문이 주는 열을 다 담지 않는다.** 쓰임이 역명 검색과 좌표 두 가지뿐이라
+    영문명, 주소, 운영기관, 전화번호, 환승역구분, 데이터기준일자는 담지 않는다.
+    환승 여부는 같은 이름의 행 수로 드러나고, 나머지는 어느 쪽에도 쓰이지 않는다.
 
     **PK 를 대리키로 둔다.** 원문 어느 열 조합도 유일하지 않다. 역번호는 중복이
     146건이고 가장 나은 `(노선번호, 역번호)` 조차 5건이 부딪힌다. 원문 열에 PK 를
@@ -90,7 +86,6 @@ CREATE TABLE {staging} (
     -- 검색 결과 한 줄을 이루는 값. 사용자는 "강남"을 검색해 강남 2호선과
     -- 강남 신분당선 중 하나를 고른다.
     name        VARCHAR(60)   NOT NULL,
-    name_en     VARCHAR(80),
     line_name   VARCHAR(40)   NOT NULL,
 
     -- 원문 식별자. 유일하지 않아 키로 쓰지 못하고 값으로만 담는다.
@@ -104,17 +99,6 @@ CREATE TABLE {staging} (
     -- 테이블을 섞어 쓰는데 한쪽만 타입이 다르면 변환이 끼고, 변환이 끼면 인덱스가
     -- 죽는다.
     location    geometry(POINT, 4326) NOT NULL,
-
-    -- 동명이역이 19쌍 있다. 노선명만으로는 어느 송정인지 알기 어렵다.
-    region      VARCHAR(20),
-
-    address     VARCHAR(200),
-    operator    VARCHAR(60),
-    phone       VARCHAR(30),
-    is_transfer BOOLEAN       NOT NULL,
-
-    -- 원문이 행마다 들고 있는 기준일자
-    base_on     DATE,
 
     PRIMARY KEY (id)
 );
@@ -145,17 +129,10 @@ def _comments(staging: str) -> str:
     return f"""
 COMMENT ON COLUMN {staging}.id IS '대리키. 원문에 유일한 열 조합이 없어 둔다';
 COMMENT ON COLUMN {staging}.name IS '역명, 끝의 역 을 뗀 형태 (예: 강남). 검색용';
-COMMENT ON COLUMN {staging}.name_en IS '영문 역명 (예: Gangnam)';
 COMMENT ON COLUMN {staging}.line_name IS '노선명 (예: 2호선, 신분당선). 검색 결과 표시용';
 COMMENT ON COLUMN {staging}.line_no IS '원문 노선번호. 노선을 유일하게 식별하지 못한다';
 COMMENT ON COLUMN {staging}.station_no IS '원문 역번호. 노선 안에서도 유일하지 않다';
 COMMENT ON COLUMN {staging}.location IS '역 좌표 (SRID 4326). 근처 부스를 찾는 기준';
-COMMENT ON COLUMN {staging}.region IS '시도 (예: 서울특별시). 동명이역 구분용';
-COMMENT ON COLUMN {staging}.address IS '역사 주소';
-COMMENT ON COLUMN {staging}.operator IS '운영기관명, 시도 접두를 뗀 형태';
-COMMENT ON COLUMN {staging}.phone IS '역사 전화번호';
-COMMENT ON COLUMN {staging}.is_transfer IS '환승역 여부';
-COMMENT ON COLUMN {staging}.base_on IS '원문 데이터기준일자';
 """
 
 
@@ -201,17 +178,10 @@ def swap_table(stations: list[Station], *, dataset: str = "") -> dict[str, int]:
                     copy.write_row(
                         (
                             station.name,
-                            station.name_en,
                             station.line_name,
                             station.line_no,
                             station.station_no,
                             f"SRID=4326;POINT({station.lon} {station.lat})",
-                            station.region,
-                            station.address,
-                            station.operator,
-                            station.phone,
-                            station.is_transfer,
-                            station.base_on,
                         )
                     )
 
