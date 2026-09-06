@@ -4,7 +4,9 @@ version = "0.1.0"
 description = "Team Neki Prefect 워크플로"
 requires-python = ">=3.13"
 dependencies = [
-    "prefect>=3.8.0",
+    # Dockerfile 베이스 이미지(prefecthq/prefect:3.8.5-*)와 같은 버전이어야 한다.
+    # 다르면 이미지 안의 prefect/prefect-kubernetes 가 교체되어 worker 가 깨진다.
+    "prefect==3.8.5",
     "httpx>=0.28.0",
     "beautifulsoup4>=4.12.0",
     "lxml>=5.0.0",

@@ -1,0 +1,19 @@
+# PR 마다 임포트와 deployment 수집을 확인하고 이미지가 빌드되는지 본다.
+# 푸시는 하지 않는다. 푸시와 GitOps 갱신은 main merge 시 build.yml 이 한다.
+name: ci
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uv sync --frozen
+      - run: make check
+      - run: make image

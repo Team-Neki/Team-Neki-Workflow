@@ -20,6 +20,9 @@ flows/
     storage.py            S3 적재
 aws/config                로컬 개발용 AWS 프로파일
 compose.yaml              로컬 S3 (LocalStack)
+Dockerfile                운영 이미지. worker 와 flow run 이 같이 씀
+.github/workflows/        ci.yml (PR 검증), build.yml (main merge 시 이미지 푸시, GitOps 갱신)
+docs/runbook.md           배포 절차와 장애 대응
 ```
 
 의존은 `deployments -> flows` 단방향입니다. `flows/`가 스케줄을 알면 안 됩니다.
@@ -58,6 +61,35 @@ UI나 cron이 워크플로를 직접 실행하지 않습니다. flow run 레코�
 
 **UI에서 실행하려면 deployment 등록과 실행 프로세스가 둘 다 필요합니다.** 하나만
 있으면 UI에 보이지만 눌러도 진행되지 않거나, 아예 목록에 뜨지 않습니다.
+
+### 운영 배포 파이프라인
+
+Actions는 Prefect 서버에 접근하지 않습니다. 서버가 외부에 노출되어 있지 않기
+때문입니다. 이미지를 밀고 GitOps 태그를 바꾸는 것까지만 하고, deployment 등록은
+클러스터 안에서 일어납니다.
+
+```text
+main merge
+  -> build.yml      이미지 빌드, ghcr.io/team-neki/team-neki-workflow:<version>-<sha7> 와 :main 푸시
+  -> build.yml      Team-Neki-GitOps overlays/prefect/kustomization.yaml 의 newTag 커밋
+  -> ArgoCD         worker Deployment 롤링
+  -> initContainer  /opt/prefect 에서 python deploy.py (등록 갱신, pause 보존)
+  -> 다음 flow run 부터 새 이미지
+```
+
+worker와 flow run(Job 파드)이 같은 이미지입니다. 이미지에 `WORKFLOW_IMAGE`로 자기
+참조가 구워져 있고 `deploy.py`가 이를 `job_variables.image`에 넣습니다. 이게 없으면
+flow run이 work pool 기본 이미지(베이스 prefect 이미지)로 떠서 `flows`를 찾지
+못합니다.
+
+- entrypoint가 cwd 기준 상대경로라 worker와 Job 모두 `/opt/prefect`에서 실행됨
+- 파드는 uid 1001, 루트 파일시스템 읽기 전용일 수 있음. 이미지 경로에 쓰지 않고
+  파일은 root 소유 644로 둠
+- 자격증명은 k8s Secret이 환경변수로 넣음. IAM role 없음. 코드는 환경변수만 봄
+- `pyproject.toml`의 prefect 버전은 Dockerfile 베이스와 같아야 함. 다르면 uv.lock
+  설치가 베이스의 prefect를 덮어써 prefect-kubernetes가 깨지고 worker가 뜨지 않음.
+  `make image`가 버전을 assert함
+- 매니페스트와 RBAC은 GitOps 레포 `overlays/prefect/`에 있음. 여기 두지 않음
 
 ## 수집 파이프라인의 경계
 
@@ -172,17 +204,22 @@ runs/    dt=<날짜>/collect.json
 - `read_stores`가 manifest의 `count`와 실제 줄 수를 대조함. 다르면 예외임
 
 `boto3.Session().client("s3")`에 `endpoint_url`을 넘기지 않습니다. 로컬과 운영의
-차이는 `AWS_PROFILE` 하나여야 합니다. 코드에 분기를 넣으면 이 성질이 깨집니다.
+차이는 환경변수뿐이어야 합니다. 로컬은 `AWS_PROFILE=neki-local`, 운영은 k8s Secret이
+넣는 자격증명 변수입니다. 코드에 분기를 넣으면 이 성질이 깨집니다.
 
 ### 배치 컨테이너 실행
 
 enrich와 index는 Spring Batch로 구현하고 Prefect가 k3s Job으로 띄웁니다. 스케줄과
 순서, 재시도는 이 저장소에 남고 계산만 컨테이너가 합니다.
 
-**Prefect의 Kubernetes work pool을 쓰지 않습니다.** 그것은 flow 자체를 컨테이너로
-돌리는 기능이라 이미지 안에 Prefect와 flow 코드가 있어야 합니다. 우리는 임의의
-Java 이미지를 돌리므로 process work pool에 flow를 두고 `flows/common/kubernetes.py`의
-`run_job`이 Job을 만들어 지켜봅니다.
+**배치 이미지를 work pool로 돌리지 않습니다.** Kubernetes work pool은 flow 자체를
+컨테이너로 돌리는 기능이라 이미지 안에 Prefect와 flow 코드가 있어야 합니다. flow는
+그렇게 우리 이미지로 Job 파드에서 돌고, 임의의 Java 이미지는 그 flow 안에서
+`flows/common/kubernetes.py`의 `run_job`이 별도 Job을 만들어 지켜봅니다.
+
+배치 Job은 flow 파드와 같은 네임스페이스(`prefect`)에 떠야 GitOps의 Role이 닿습니다.
+`K8S_NAMESPACE`가 비어 있으면 `default`로 가므로 work pool의 base job template
+env에서 지정해야 합니다.
 
 Job spec에서 놓치기 쉬운 것들입니다.
 
@@ -197,8 +234,9 @@ Job spec에서 놓치기 쉬운 것들입니다.
 컨테이너 stdout은 Prefect 로그로 옮깁니다. 이게 없으면 UI에는 실패 사실만 남고
 원인은 이미 사라진 pod 안에 있습니다.
 
-권한은 `k8s/rbac.yaml`입니다. Job의 create/get/list/watch/delete, pod의
-get/list/watch, `pods/log`의 get이면 충분합니다. pod 삭제 권한은 필요 없습니다.
+권한은 GitOps 레포 `overlays/prefect/`의 Role이 줍니다. 이 저장소에는 매니페스트를
+두지 않습니다. Job의 create/get/list/watch/delete, pod의 get/list/watch, `pods/log`의
+get이면 충분합니다. pod 삭제 권한은 필요 없습니다.
 Job을 지우면 ownerReference를 따라 정리됩니다.
 
 ### 최신 이미지와 재현성을 같이 얻는다
@@ -278,7 +316,8 @@ flow 함수에 `_flow` 접미사를 붙이지 않는 이유는 `flows.daily_sync
 두 진입점은 용도가 다르며 섞어 쓰면 안 됩니다.
 
 - `serve.py` : 로컬 개발용. 서버나 work pool 없이 한 프로세스로 즉시 확인함
-- `deploy.py` : 운영용. 스케줄만 등록하고 실행은 worker가 담당함
+- `deploy.py` : 운영용. 스케줄만 등록하고 실행은 worker가 담당함. 운영에서는 worker
+  파드의 initContainer가 이미지 안에서 실행함
 
 **운영 스케줄 등록은 반드시 `deploy.py`를 거쳐야 합니다.** `prefect deploy`나
 `flow.deploy()`를 직접 호출하면 아래 보존 로직을 건너뜁니다.
@@ -293,6 +332,8 @@ UI에서 꺼둔 스케줄이 배포할 때마다 되살아납니다. Airflow에�
 
 - `serve.py` 재시작 : 매번 재등록하므로 프로세스가 뜰 때마다 풀림
 - `deploy()` 재실행 : 배포할 때마다 풀림
+- 이미지 태그 갱신으로 worker 파드가 재시작될 때 : initContainer가 `deploy.py`를
+  돌리므로 재등록되지만 아래 보존 로직 덕에 pause는 유지됨
 - Prefect 서버 재시작 : 유지됨 (DB에 남음)
 - worker 재시작 : 유지됨 (worker는 정의를 건드리지 않음)
 
@@ -329,9 +370,10 @@ make setup
 프로젝트 루트를 통째로 `sys.path`에 넣기 때문에 `packages` 목록과 무관하게 전부
 import되기 때문입니다.
 
-반면 wheel을 빌드하면 나열된 패키지만 포함됩니다. 즉, 로컬과 CI 테스트는
-통과하는데 컨테이너 배포에서만 `ModuleNotFoundError`가 나는 형태로 드러납니다.
-`packages`를 수정했다면 wheel 내용을 직접 확인하는 것이 좋습니다.
+반면 wheel을 빌드하면 나열된 패키지만 포함됩니다. 운영 이미지는 wheel 대신
+`Dockerfile`이 `deployments/`, `flows/`, `deploy.py`를 직접 복사하므로, 최상위
+패키지를 추가하면 `packages`와 Dockerfile의 `COPY` 둘 다에 넣어야 합니다. 빠뜨리면
+`make check`는 통과하고 `make image`에서만 `ModuleNotFoundError`가 납니다.
 
 ```bash
 uv build --wheel --out-dir /tmp/dist
@@ -392,6 +434,13 @@ uv run --env-file .env python -c \
 make build
 ```
 
+`Dockerfile`이나 의존성을 건드렸다면 이미지를 빌드해 안에서 확인합니다. 운영과 같은
+uid와 읽기 전용 루트로 돌리므로 파일 권한 문제도 여기서 드러납니다.
+
+```bash
+make image
+```
+
 `deploy.py`나 `deployments/`를 건드렸다면 로컬 서버를 띄워 배포 사이클을 확인해야
 합니다. 실제 스케줄을 다루는 코드라 import 성공만으로는 회귀를 잡을 수 없습니다.
 
@@ -399,7 +448,8 @@ make build
 PREFECT_HOME=/tmp/pf-test uv run prefect server start --host 127.0.0.1 --port 4301
 export PREFECT_API_URL=http://127.0.0.1:4301/api
 uv run prefect work-pool create neki-pool --type process
-make deploy PORT=4301
+WORKFLOW_IMAGE=ghcr.io/team-neki/team-neki-workflow:local make deploy PORT=4301
+uv run prefect deployment inspect hello/hello-local | grep image
 ```
 
 검증에는 `PREFECT_HOME`을 임시 경로로 지정해 격리해야 합니다. 지정하지 않으면
