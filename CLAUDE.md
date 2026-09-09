@@ -18,6 +18,7 @@ flows/
   common/                 여러 워크플로가 함께 쓰는 task
     store.py              수집 공통 스키마 (CollectedStore)
     storage.py            S3 적재
+    imweb_map.py          imweb 지도 위젯 수집 (인생네컷, 포토이즘, 돈룩업)
 aws/config                로컬 개발용 AWS 프로파일
 compose.yaml              로컬 S3 (LocalStack)
 Dockerfile                운영 이미지. worker 와 flow run 이 같이 씀
@@ -102,11 +103,57 @@ flow run이 work pool 기본 이미지(베이스 prefect 이미지)로 떠서 `f
 **collect에서 주소를 해석하지 않습니다.** 도로명인지 지번인지 판정하거나 상호명,
 층수를 떼는 것은 전부 enrich의 일입니다. 픽닷은 수집원이 Kakao라 지번 주소를
 공짜로 받을 수 있지만 담지 않습니다. 다른 브랜드에 없는 값을 담으면 collect
-출력이 브랜드마다 달라지고, 그러면 enrich가 4개를 한 번에 받지 못합니다.
+출력이 브랜드마다 달라지고, 그러면 enrich가 전 브랜드를 한 번에 받지 못합니다.
 
 지오코딩 같은 외부 API 보강은 enrich에 모읍니다. 수집 flow에 붙이면 Kakao 장애가
-수집 실패가 되고, 색인 규칙을 고칠 때마다 크롤링이 따라 돕니다. 픽닷과 모노맨션은
-수집원 자체가 Kakao라 예외지만, 이 경우에도 받아온 값을 해석하지는 않습니다.
+수집 실패가 되고, 색인 규칙을 고칠 때마다 크롤링이 따라 돕니다. 픽닷, 모노맨션,
+포토그레이, 하루필름, 포토랩플러스, 비룸스튜디오는 수집원 자체가 Kakao라 예외지만,
+이 경우에도 받아온 값을 해석하지는 않습니다.
+
+하루필름은 사이트에도 목록이 있지만 Kakao를 씁니다. 전체 목록 페이지에 목록이
+없어 지역 페이지 8개를 순회해야 하고, 그 목록마저 게시판이 아니라 갤러리 위젯
+캡션이라 주소가 마지막 `<br>` 뒤 텍스트로 들어 있습니다. 전화와 좌표도 주지
+않습니다. 자세한 근거는 `flows/harufilm_stores/flow.py` 모듈 docstring에
+남겼습니다.
+
+포토랩플러스는 사이트에 목록이 있는데도 Kakao를 씁니다. 탭이 무규칙한 iframe으로
+나뉘고 손으로 만든 텍스트 위젯이라 주소가 두 줄로 쪼개진 항목이 있으며, 제주 지점에
+서울 주소가 들어가 있는 등 **사이트가 틀린 값을 줍니다.** 파서로는 걸러지지 않는
+문제라 수집원 자체를 바꾼 것입니다.
+
+비룸스튜디오는 브랜드 도메인이 NXDOMAIN이라 Kakao 말고 고를 수집원이 아예
+없습니다.
+
+### imweb 지도 위젯은 한 모듈이 담당합니다
+
+인생네컷과 포토이즘, 돈룩업은 같은 imweb 위젯을 씁니다. 목록 페이지 HTML에는 지점이 없고
+AJAX 엔드포인트가 HTML 조각을 돌려주므로, 페이지를 긁지 않고 엔드포인트를 직접
+호출합니다. 엔드포인트와 셀렉터가 사이트를 넘나들며 그대로 먹습니다.
+
+그래서 `flows/common/imweb_map.py` 하나가 순회와 파싱을 맡고 브랜드 flow는
+`collect_board`에 넷만 넘깁니다.
+
+```text
+base_url  board_code  referer  platform
+```
+
+**브랜드별 분기를 이 모듈에 넣지 않습니다.** 넣으면 사이트가 개편됐을 때 한 곳만
+고치고 넘어가게 되어 공용화한 의미가 사라집니다. 위 넷 말고 다른 것이 필요해
+보이면 대개 collect가 아니라 enrich에서 해야 할 일입니다.
+
+**범위를 벗어난 페이지가 빈 응답이 아니라 마지막 페이지로 고정됩니다.** 따라서
+"빈 페이지면 중단"으로는 끝나지 않고, 직전 페이지와 항목 id 집합을 비교해야
+합니다. `MAX_PAGES`는 이 판정이 어긋났을 때를 막는 안전장치일 뿐이므로 실제
+페이지 수에 가깝게 잡지 않습니다. 가깝게 잡으면 지점이 조금 늘었을 때 상한에
+걸려 조용히 잘립니다.
+
+조각 상단 `.tit > span.text-brand`에 총 건수가 실려 옵니다. Kakao의
+`total_count`처럼 대조 기준으로 쓰되, 위젯 설정에 따라 꺼져 있어(인생네컷) 값이
+없으므로 파서는 `int | None`을 돌려주고 있을 때만 비교합니다.
+
+전화번호는 `tel:` 링크가 있어도 href가 비어 있는 경우가 있습니다. 포토이즘은 488곳
+전부가 그렇습니다. `""`가 그대로 담기면 다음 단계가 번호가 있는 줄로 오해하므로
+`None`으로 맞춥니다.
 
 ### Kakao 장소검색의 45건 상한
 
@@ -124,7 +171,7 @@ flow run이 work pool 기본 이미지(베이스 prefect 이미지)로 떠서 `f
 ### 공통 스키마
 
 브랜드별 `Store` dataclass를 두지 않습니다. `flows/common/store.py`의
-`CollectedStore` 하나를 4개 브랜드가 공유하고, 사이트가 주지 않는 필드는 `None`으로
+`CollectedStore` 하나를 모든 브랜드가 공유하고, 사이트가 주지 않는 필드는 `None`으로
 둡니다. 브랜드마다 모양이 다르면 enrich가 공통으로 받을 수 없습니다.
 
 `collected_at`은 `CollectedStore`에 없습니다. 사이트가 준 값이 아니라 우리가 언제
@@ -409,17 +456,30 @@ LocalStack이 먼저 떠 있어야 합니다.
 make localstack
 make hello
 make lifefourcuts
+make photoism
+make dontlxxkup
 make photosignature
+make photogray
 make planbstudio
 make picdot
 make monomansion
+make harufilm
+make photolabplus
+make broomstudio
 make collect
 make s3-ls
 ```
 
+`picdot`, `monomansion`, `photogray`, `harufilm`, `photolabplus`, `broomstudio`는
+`KAKAO_API_KEY`가 있어야 돕니다. 키가 없으면 `flows/common/kakao.py`의 `api_key()`가
+`RuntimeError`로 막습니다.
+
 적재를 건드렸다면 실행 결과가 아니라 적재물을 봐야 합니다. `make s3-ls`로 키가
 빠짐없이 올라갔는지 보고, 같은 flow를 두 번 돌려 키 수가 늘지 않는지 확인합니다.
 늘어난다면 파티션 경로에 실행마다 바뀌는 값이 섞인 것입니다.
+
+`flows/common/`의 수집 모듈을 고쳤다면 그것을 쓰는 브랜드를 모두 돌려 건수가
+전과 같은지 봐야 합니다. `imweb_map.py`는 인생네컷과 포토이즘, 돈룩업이 함께 씁니다.
 
 파싱만 확인하고 싶으면 적재를 끕니다.
 
