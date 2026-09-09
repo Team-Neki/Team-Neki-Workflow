@@ -176,7 +176,8 @@ Prefect UI에서 deployment를 pause합니다. `deploy.py`가 배포 전 상태�
 
 | 증상 | 원인 | 조치 |
 |---|---|---|
-| build.yml "Update image tag" 단계의 `test ... = "$TAG"` 실패 | GitOps `images[]`에 이미지 이름 항목이 없음 | `overlays/prefect/kustomization.yaml`에 항목 추가 |
+| build.yml "Update image tag" 단계의 `test ... = "$TAG"` 실패 | GitOps `images[]`에 이미지 이름 항목이 없음 | `overlays/prefect/kustomization.yaml`에 항목 추가. 아래 주의 |
+| 배포가 초록불인데 worker 이미지가 그대로 | `images[]` 항목은 있지만 그 이름을 참조하는 매니페스트가 없음 | `worker.yaml`의 이미지 이름과 `images[].name`을 대조 |
 | build.yml "Check GitOps token" 단계에서 `GITOPS_PAT 가 이 저장소에서 보이지 않는다` | 조직 secret이 이 저장소에 열려 있지 않음 | 위 "GitOps 토큰" 절차 |
 | GitOps checkout 또는 push에서 403 | `GITOPS_PAT`가 만료됐거나 발급자에게 GitOps write 권한이 없음 | 위 "GitOps 토큰" 절차의 재발급 |
 | worker 파드 `ImagePullBackOff` | 패키지가 private이거나 태그가 없음 | 패키지를 public으로. 태그는 Actions 로그와 대조 |
@@ -185,6 +186,12 @@ Prefect UI에서 deployment를 pause합니다. `deploy.py`가 배포 전 상태�
 | 배치 Job 생성 시 `403 Forbidden`, 네임스페이스 `default` | `K8S_NAMESPACE` 누락 | base job template env에 `K8S_NAMESPACE=prefect` |
 | worker가 `prefect_kubernetes` import 실패로 못 뜸 | `pyproject.toml`의 prefect 버전이 Dockerfile 베이스와 다름 | 둘을 맞추고 `make image`로 확인 (assert가 잡음) |
 | 꺼둔 스케줄이 되살아남 | `deploy.py`를 거치지 않고 `prefect deploy` 등을 직접 호출함 | 등록은 `deploy.py`로만 |
+
+**`images[]` 항목만 추가하는 것으로는 부족합니다.** kustomize의 이미지 변환은
+매니페스트가 그 이름을 참조할 때만 먹습니다. 참조가 없으면 `newTag`를 바꿔도 아무
+일도 일어나지 않는데, `yq`와 `test`는 통과하고 커밋과 push, ArgoCD sync까지 다
+됩니다. **실패가 사라지고 배포만 안 되는 상태**가 되므로, 항목을 추가할 때는
+`worker.yaml`이 그 이미지를 참조하는지 같이 봐야 합니다.
 
 파드 안을 직접 봐야 할 때는 실행 중인 이미지로 셸을 엽니다. 파드는 uid 1001, 읽기 전용
 루트로 뜨므로 로컬에서도 같은 조건으로 재현하는 것이 좋습니다.
