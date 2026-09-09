@@ -177,7 +177,8 @@ Prefect UI에서 deployment를 pause합니다. `deploy.py`가 배포 전 상태�
 | 증상 | 원인 | 조치 |
 |---|---|---|
 | build.yml "Update image tag" 단계의 `test ... = "$TAG"` 실패 | GitOps `images[]`에 이미지 이름 항목이 없음 | `overlays/prefect/kustomization.yaml`에 항목 추가 |
-| GitOps checkout 또는 push에서 403 | `GITOPS_PAT`가 이 저장소에 열려 있지 않거나 만료됨 | 위 "GitOps 토큰" 절차 |
+| build.yml "Check GitOps token" 단계에서 `GITOPS_PAT 가 이 저장소에서 보이지 않는다` | 조직 secret이 이 저장소에 열려 있지 않음 | 위 "GitOps 토큰" 절차 |
+| GitOps checkout 또는 push에서 403 | `GITOPS_PAT`가 만료됐거나 발급자에게 GitOps write 권한이 없음 | 위 "GitOps 토큰" 절차의 재발급 |
 | worker 파드 `ImagePullBackOff` | 패키지가 private이거나 태그가 없음 | 패키지를 public으로. 태그는 Actions 로그와 대조 |
 | initContainer가 `work pool이 지정되지 않았습니다`로 종료 | `PREFECT_WORK_POOL` env 누락 | GitOps worker 매니페스트 |
 | flow run 파드에서 `ModuleNotFoundError: flows` | deployment에 `image`가 없어 기본 prefect 이미지로 뜸 | initContainer 로그에 `이미지:` 줄이 있는지 확인. 없으면 `WORKFLOW_IMAGE`가 구워지지 않은 이미지 |
