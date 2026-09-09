@@ -1,0 +1,84 @@
+# main 에 merge 되면 이미지를 GHCR 에 올리고 GitOps 레포의 태그를 갱신한다.
+#
+# Prefect 서버는 외부에 노출되지 않으므로 여기서 서버를 건드리지 않는다.
+# deployment 등록(deploy.py)은 워커 파드의 initContainer 가 클러스터 안에서 한다.
+#
+#   merge -> 이미지 빌드/푸시 -> GitOps newTag 커밋 -> ArgoCD 가 worker 롤링
+#         -> initContainer 가 deploy.py 실행 -> 다음 run 부터 새 코드
+name: build
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "**.md"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+# GitOps 커밋이 겹치면 rebase 로 풀리지 않는 충돌이 나므로 직렬화한다.
+concurrency:
+  group: build-main
+  cancel-in-progress: false
+
+env:
+  IMAGE: ghcr.io/team-neki/team-neki-workflow
+  GITOPS_REPO: Team-Neki/Team-Neki-GitOps
+  GITOPS_PATH: overlays/prefect/kustomization.yaml
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # 태그는 <pyproject version>-<sha7>. main 태그도 같이 올려 최신을 가리킨다.
+      - name: Resolve image tag
+        id: tag
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' pyproject.toml)
+          echo "tag=${version}-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      # IMAGE_REF 를 이미지 안에 굽는다. deploy.py 가 Job 파드 이미지로 쓴다.
+      - name: Build and push
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          docker build --build-arg IMAGE_REF="$IMAGE:$TAG" -t "$IMAGE:$TAG" -t "$IMAGE:main" .
+          docker push "$IMAGE:$TAG"
+          docker push "$IMAGE:main"
+
+      # GITOPS_PAT: Team-Neki 조직 secret. GitOps 레포에 contents:write 권한이 있는 PAT 로
+      # 다른 저장소 CI 와 같은 것을 쓴다. 조직 설정에서 이 저장소에 열려 있어야 한다.
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ env.GITOPS_REPO }}
+          token: ${{ secrets.GITOPS_PAT }}
+          path: gitops
+
+      - name: Update image tag in GitOps repo
+        working-directory: gitops
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          yq -i '(.images[] | select(.name == strenv(IMAGE))).newTag = strenv(TAG)' "$GITOPS_PATH"
+          # 셀렉터가 이미지를 못 찾으면 파일이 그대로라 여기서 걸린다.
+          test "$(yq '.images[] | select(.name == strenv(IMAGE)) | .newTag' "$GITOPS_PATH")" = "$TAG"
+          if git diff --quiet; then
+            echo "already at $TAG"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git commit -am "chore(prefect): update image to $TAG"
+          # 다른 레포의 CI 도 같은 GitOps 레포에 커밋하므로 push 직전에 rebase 한다.
+          for i in 1 2 3; do
+            git pull --rebase && git push && exit 0
+            sleep $((i * 5))
+          done
+          exit 1

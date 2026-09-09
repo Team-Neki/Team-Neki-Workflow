@@ -20,6 +20,9 @@ aws/config                로컬 개발용 AWS 프로파일
 compose.yaml              로컬 S3 (LocalStack)
 serve.py                  로컬 개발용 - 한 프로세스로 서빙
 deploy.py                 운영 배포용 - work pool에 스케줄 등록
+Dockerfile                운영 이미지 - worker와 flow run이 같이 씀
+.github/workflows/        ci.yml (PR 검증), build.yml (main merge 시 이미지 푸시, GitOps 갱신)
+docs/runbook.md           배포 절차와 장애 대응
 ```
 
 의존 방향은 단방향입니다.
@@ -42,6 +45,9 @@ UI나 cron이 워크플로를 직접 실행하지는 않습니다. flow run 레�
 
 따라서 실행 프로세스가 없으면 run이 `SCHEDULED`에 쌓이기만 하고, 버튼을 눌러도
 폴링 주기만큼(기본 10초) 지연이 생깁니다.
+
+운영에서는 worker가 k3s 클러스터 안에 있고, flow run은 worker와 같은 이미지의 Job
+파드로 뜹니다. 코드가 클러스터에 들어가는 경로는 [운영 배포](#운영-배포)에 있습니다.
 
 ## 수집 파이프라인
 
@@ -218,6 +224,7 @@ make
   server          Prefect 서버를 띄운다
   deploy          work pool에 스케줄을 등록한다
   build           wheel을 빌드하고 포함된 패키지를 확인한다
+  image           컨테이너 이미지를 빌드하고 안에서 deployment 수집을 확인한다
   clean           빌드 산출물과 캐시를 지운다
 ```
 
@@ -254,14 +261,15 @@ make localstack
 내리면 버킷 내용도 사라집니다. LocalStack 커뮤니티 판은 상태를 보존하지 않기
 때문인데, `make localstack`이 버킷을 다시 만들어주므로 재생성 비용은 없습니다.
 
-**로컬과 운영의 차이는 AWS 프로파일 하나입니다.** 코드는 endpoint를 모릅니다.
+**로컬과 운영의 차이는 환경변수뿐입니다.** 코드는 endpoint를 모릅니다.
 
-- `neki-local` : `aws/config`에 있음. `endpoint_url`이 LocalStack을 가리킴
-- `neki-prod` : 실제 S3. 자격증명은 worker의 IAM role에서 옴
+- 로컬 : `AWS_PROFILE=neki-local`. `aws/config`의 `endpoint_url`이 LocalStack을 가리킴
+- 운영 : 프로파일을 쓰지 않음. k8s Secret이 `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`,
+  `AWS_DEFAULT_REGION`을 파드 환경변수로 넣고 boto3 기본 자격증명 체인이 집어감
 
 ```text
 AWS_PROFILE=neki-local   ->  http://localhost:4566
-AWS_PROFILE=neki-prod    ->  https://s3.ap-northeast-2.amazonaws.com
+운영 (환경변수)          ->  https://s3.ap-northeast-2.amazonaws.com
 ```
 
 `aws/config`에 있는 키는 LocalStack이 검증하지 않는 더미라 커밋되어 있습니다.
@@ -352,15 +360,66 @@ make serve PORT=4300
 
 ## 운영 배포
 
-운영에서는 `serve.py`를 쓰지 않습니다. 스케줄 등록과 실행을 분리합니다.
+운영에서는 `serve.py`를 쓰지 않습니다. 코드는 컨테이너 이미지로 k3s 클러스터에
+들어가고, 스케줄 등록은 클러스터 안에서 일어납니다. Prefect 서버가 외부에 노출되어
+있지 않으므로 GitHub Actions는 서버에 접근하지 않습니다. Actions가 하는 일은 이미지
+푸시와 GitOps 레포 태그 커밋 둘뿐입니다.
 
-```bash
-make deploy WORK_POOL=neki-pool
-uv run prefect worker start --pool neki-pool
+```text
+main merge
+  -> build.yml      이미지 빌드, ghcr.io/team-neki/team-neki-workflow:<version>-<sha7> 와 :main 푸시
+  -> build.yml      Team-Neki-GitOps overlays/prefect/kustomization.yaml 의 newTag 커밋
+  -> ArgoCD         worker Deployment 롤링
+  -> initContainer  /opt/prefect 에서 python deploy.py (deployment 등록 갱신, pause 보존)
+  -> 다음 flow run 부터 새 이미지
 ```
 
-`make deploy`는 스케줄만 등록하고 끝납니다. 실제 실행은 worker가 담당하므로 둘 다
-필요합니다.
+worker와 flow run(Job 파드)이 같은 이미지를 씁니다. 이미지에 `WORKFLOW_IMAGE`로 자기
+참조가 구워져 있어 `deploy.py`가 그 값을 각 deployment의 `job_variables.image`에
+넣습니다. 태그의 version은 `pyproject.toml`에서 읽습니다.
+
+자격증명(`KAKAO_API_KEY`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`,
+`AWS_DEFAULT_REGION`, `S3_BUCKET`)은 k8s Secret이 파드 환경변수로 넣습니다. IAM role은
+없고 코드는 환경변수만 봅니다. 매니페스트와 RBAC은 GitOps 레포 `overlays/prefect/`에
+있습니다.
+
+### Actions 준비
+
+secrets는 둘뿐입니다.
+
+- `GITHUB_TOKEN` : 자동 제공. GHCR 푸시에 씀
+- `GITOPS_PAT` : Team-Neki 조직 secret. GitOps 레포에 contents:write 권한이 있는 PAT로
+  다른 저장소 CI와 같은 것을 씀. 조직 설정에서 이 저장소에 Repository access를 열어야 함
+
+첫 푸시 뒤에는 GHCR 패키지를 public으로 바꿔야 클러스터가 인증 없이 당길 수
+있습니다. Actions로는 바꿀 수 없어 한 번 손으로 합니다.
+
+1. `https://github.com/orgs/Team-Neki/packages/container/team-neki-workflow/settings`
+2. Danger Zone > Change visibility > Public
+
+절차와 장애 대응은 `docs/runbook.md`에 있습니다.
+
+### 이미지 확인
+
+```bash
+make image
+```
+
+이미지를 빌드하고 운영과 같은 조건(uid 1001, 읽기 전용 루트)으로 안에서 prefect
+버전, deployment 수집, `WORKFLOW_IMAGE`를 확인합니다. PR의 `ci.yml`도 같은 것을
+돌립니다.
+
+### 로컬에서 직접 등록하기
+
+클러스터 API로 터널을 열면 `make deploy`가 그대로 동작합니다. 이미지 밖에서
+실행하므로 `WORKFLOW_IMAGE`를 직접 넘겨야 flow run 파드 이미지가 지정됩니다.
+
+```bash
+kubectl -n prefect port-forward svc/prefect-server 4200:4200
+WORKFLOW_IMAGE=ghcr.io/team-neki/team-neki-workflow:main make deploy WORK_POOL=neki-pool
+```
+
+`make deploy`는 스케줄만 등록하고 끝납니다. 실행은 클러스터의 worker가 담당합니다.
 
 ### pause가 배포에 지워지는 문제
 

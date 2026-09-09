@@ -9,6 +9,7 @@ HOST ?= 127.0.0.1
 PORT ?= 4200
 API_URL ?= http://$(HOST):$(PORT)/api
 WORK_POOL ?= neki-pool
+IMAGE ?= ghcr.io/team-neki/team-neki-workflow:local
 
 # uv run 은 .env 를 자동으로 읽지 않는다. 파일이 있을 때만 지정한다.
 # 없는 파일을 가리키면 uv 가 실패하므로 wildcard 로 존재를 확인한다.
@@ -23,7 +24,8 @@ PREFECT_ENV = PREFECT_API_URL=$(API_URL)
 .DEFAULT_GOAL := help
 .PHONY: help setup check hello lifefourcuts photoism dontlxxkup photosignature \
 	photogray planbstudio picdot monomansion harufilm photolabplus broomstudio \
-	collect localstack localstack-down s3-init s3-ls serve server deploy build clean
+	collect localstack localstack-down s3-init s3-ls serve server deploy \
+	build image clean
 
 help: ## 명령 목록을 출력한다
 	@echo "사용법: make <명령>"
@@ -31,7 +33,7 @@ help: ## 명령 목록을 출력한다
 	@grep -E '^[a-z][a-z-]*:.*## ' $(MAKEFILE_LIST) \
 		| awk -F':.*## ' '{printf "  %-16s %s\n", $$1, $$2}'
 	@echo
-	@echo "변수: HOST=$(HOST) PORT=$(PORT) WORK_POOL=$(WORK_POOL)"
+	@echo "변수: HOST=$(HOST) PORT=$(PORT) WORK_POOL=$(WORK_POOL) IMAGE=$(IMAGE)"
 	@echo "UI:   http://$(HOST):$(PORT)/deployments"
 
 setup: ## 의존성을 uv.lock 기준으로 설치한다
@@ -157,6 +159,18 @@ server: ## Prefect 서버를 띄운다 (UI 주소는 아래 변수 참고)
 
 deploy: ## work pool에 스케줄을 등록한다 (pause 상태 보존)
 	$(PREFECT_ENV) PREFECT_WORK_POOL=$(WORK_POOL) $(UV) run python deploy.py
+
+# 운영과 같은 조건(uid 1001, 읽기 전용 루트)으로 돌려 이미지 안 파일이 읽히는지 본다.
+# prefect 버전이 베이스와 어긋나면(uv.lock 이 베이스의 prefect 를 덮어씀) 여기서 걸린다.
+image: ## 컨테이너 이미지를 빌드하고 안에서 deployment 수집을 확인한다
+	docker build --build-arg IMAGE_REF=$(IMAGE) -t $(IMAGE) .
+	docker run --rm --user 1001 --read-only -e HOME=/tmp --tmpfs /tmp $(IMAGE) python -c "\
+	import os, prefect, prefect_kubernetes; \
+	from deployments import collect; \
+	assert prefect.__version__ == '3.8.5', prefect.__version__; \
+	print('prefect', prefect.__version__); \
+	print('deployment', len(list(collect())), '건'); \
+	print('WORKFLOW_IMAGE', os.environ['WORKFLOW_IMAGE'])"
 
 build: ## wheel을 빌드하고 포함된 패키지를 확인한다
 	$(UV) build --wheel --out-dir dist

@@ -14,6 +14,4 @@ endpoint_url = http://localhost:4566
 aws_access_key_id = test
 aws_secret_access_key = test
 
-# 운영. 자격증명은 worker 의 IAM role 에서 온다. 여기에 키를 적지 않는다.
-[profile neki-prod]
-region = ap-northeast-2
+# 운영은 이 파일을 쓰지 않는다. k8s Secret 이 자격증명과 리전을 환경변수로 준다.
