@@ -70,6 +70,18 @@ UI나 cron이 워크플로를 직접 실행하지는 않습니다. flow run 레�
 주소는 `경남 통영시 광도면 죽림리 1569-39 1층 102호 플랜비스튜디오 통영점`처럼
 한 브랜드 안에서도 도로명과 지번이 섞여 있는데, 이 상태 그대로 둡니다.
 
+**좌표만 예외입니다.** 사이트가 좌표를 주지 않으면 그 지점은 색인에서 통째로
+빠지므로, 수집 flow가 `flows/common/geocode.py`로 주소를 넣어 채웁니다. 원래
+지오코딩은 enrich의 일이지만 그 단계가 아직 없어 결측이 방치되기 때문입니다.
+대신 규약이 막으려던 것을 코드로 막습니다. Kakao가 죽어도 수집은 끝까지 가고
+(키가 없거나 연속 세 번 실패하면 보정만 건너뜁니다), 채운 좌표는
+`coordinate_source`(`kakao_address` / `kakao_keyword`)로 사이트가 준 값과
+구분되며, flow의 `geocode` 파라미터로 끌 수 있습니다.
+
+주소검색이 0건이면 `"<주소 앞 2토큰> <상호명>"`으로 다시 묻습니다.
+`서울 강남구 압구정로50길 27 1F`처럼 접미사 때문에 주소검색이 실패하는 지점이
+실제로 있습니다. 이때도 주소를 자르거나 해석하지는 않습니다.
+
 수집원이 같은 브랜드는 파서를 공유합니다. 인생네컷과 포토이즘, 돈룩업은 같은 imweb
 지도 위젯을 쓰므로 `flows/common/imweb_map.py` 하나가 순회와 파싱을 맡고, 브랜드 flow는
 `base_url`, `board_code`, `referer`, `platform` 넷만 넘깁니다. 브랜드마다 파서를
@@ -299,7 +311,9 @@ make broomstudio
 ```
 
 `picdot`, `monomansion`, `photogray`, `harufilm`, `photolabplus`, `broomstudio`는
-Kakao Local API를 호출하므로 `KAKAO_API_KEY`가 필요합니다. `.env`에 넣어두면
+Kakao Local API를 호출하므로 `KAKAO_API_KEY`가 필요합니다. `planbstudio`,
+`photosignature`, `lifefourcuts`, `photoism`, `dontlxxkup`은 키가 없어도 돌지만
+좌표 보정만 건너뜁니다. `.env`에 넣어두면
 `make`가 알아서 읽습니다. `uv run`은 `.env`를 자동으로 읽지 않으므로, Makefile을 거치지
 않고 직접 실행할 때는 `uv run --env-file .env ...`로 지정해야 합니다.
 
@@ -324,6 +338,15 @@ Kakao Developers에서 앱을 만들고 `앱` > `플랫폼 키` > **REST API 키
 ```bash
 uv run --env-file .env python -c \
   "from flows.picdot_stores import picdot_stores; picdot_stores(persist=False)"
+```
+
+좌표 보정까지 끄려면 `geocode`도 함께 끕니다. 파싱만 볼 때는 Kakao를 부를 이유가
+없습니다.
+
+```bash
+uv run --env-file .env python -c \
+  "from flows.planbstudio_stores import planbstudio_stores; \
+   planbstudio_stores(persist=False, geocode=False)"
 ```
 
 `make check`는 임포트와 deployment 수집만 확인합니다. 구조를 바꾼 뒤 회귀를 빠르게

@@ -111,10 +111,7 @@ docker pull ghcr.io/team-neki/team-neki-workflow:main
 - `kustomization.yaml`의 `images[]`에 `name: ghcr.io/team-neki/team-neki-workflow` 항목 : build.yml이 이 항목의 `newTag`를 바꿈
 - worker Deployment가 위 이미지를 쓰고, initContainer가 `/opt/prefect`에서 `python deploy.py`를 실행함
 - initContainer env : `PREFECT_API_URL`, `PREFECT_WORK_POOL=neki-pool`
-- work pool `neki-pool`의 base job template env : `KAKAO_API_KEY`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_DEFAULT_REGION`, `S3_BUCKET` (k8s Secret 참조), `K8S_NAMESPACE=prefect`
-
-`K8S_NAMESPACE`는 놓치기 쉽습니다. 비어 있으면 `flows/common/kubernetes.py`가 배치 Job을
-`default` 네임스페이스에 만들려 하고, Role은 `prefect`에만 있으므로 403이 납니다.
+- work pool `neki-pool`의 base job template env : `KAKAO_API_KEY` (k8s Secret 참조)
 
 ## merge할 때 확인하는 것
 
@@ -183,7 +180,6 @@ Prefect UI에서 deployment를 pause합니다. `deploy.py`가 배포 전 상태�
 | worker 파드 `ImagePullBackOff` | 패키지가 private이거나 태그가 없음 | 패키지를 public으로. 태그는 Actions 로그와 대조 |
 | initContainer가 `work pool이 지정되지 않았습니다`로 종료 | `PREFECT_WORK_POOL` env 누락 | GitOps worker 매니페스트 |
 | flow run 파드에서 `ModuleNotFoundError: flows` | deployment에 `image`가 없어 기본 prefect 이미지로 뜸 | initContainer 로그에 `이미지:` 줄이 있는지 확인. 없으면 `WORKFLOW_IMAGE`가 구워지지 않은 이미지 |
-| 배치 Job 생성 시 `403 Forbidden`, 네임스페이스 `default` | `K8S_NAMESPACE` 누락 | base job template env에 `K8S_NAMESPACE=prefect` |
 | worker가 `prefect_kubernetes` import 실패로 못 뜸 | `pyproject.toml`의 prefect 버전이 Dockerfile 베이스와 다름 | 둘을 맞추고 `make image`로 확인 (assert가 잡음) |
 | 꺼둔 스케줄이 되살아남 | `deploy.py`를 거치지 않고 `prefect deploy` 등을 직접 호출함 | 등록은 `deploy.py`로만 |
 

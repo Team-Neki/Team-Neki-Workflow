@@ -18,6 +18,7 @@ FIELD_ORDER = (
     "phone",
     "longitude",
     "latitude",
+    "coordinate_source",
 )
 
 

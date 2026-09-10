@@ -4,6 +4,7 @@ import time
 
 from prefect import flow, get_run_logger
 
+from flows.common.geocode import fill_coordinates
 from flows.common.output import log_stores
 from flows.common.platform import Platform
 from flows.common.storage import put_raw, put_stores
@@ -23,6 +24,7 @@ def planbstudio_stores(
     max_pages: int = MAX_PAGES,
     delay_seconds: float = 0.5,
     persist: bool = True,
+    geocode: bool = True,
 ) -> list[CollectedStore]:
     """목록을 순회하며 지점을 모으고 좌표를 채운다.
 
@@ -32,7 +34,8 @@ def planbstudio_stores(
     목록은 범위를 벗어나면 빈 응답을 준다. 인생네컷처럼 마지막 페이지를
     되돌려주지 않으므로 빈 응답으로 종료를 판정한다.
 
-    persist를 끄면 S3에 적재하지 않는다. 파싱만 확인할 때 쓴다.
+    persist를 끄면 S3에 적재하지 않는다. 파싱만 확인할 때 쓴다. geocode를
+    끄면 좌표가 빈 지점을 Kakao로 채우지 않는다. 파싱만 볼 때는 둘 다 끈다.
     """
     logger = get_run_logger()
 
@@ -66,6 +69,9 @@ def planbstudio_stores(
         )
 
     stores = list(collected.values())
+    if geocode:
+        stores = fill_coordinates(stores, label="플랜비스튜디오")
+
     log_stores(stores, label="플랜비스튜디오")
 
     if persist:
