@@ -20,16 +20,9 @@ from typing import Literal
 
 from flows.common.platform import Platform
 
-# 좌표를 우리가 어떻게 채웠는지. 값이 아니라 신뢰도를 말해준다.
-#
-#   None           손대지 않았다. 수집원이 준 값이거나, 끝내 못 채웠다
-#   kakao_address  주소를 Kakao 주소검색으로 변환했다
-#   kakao_keyword  주소로는 안 잡혀 상호명으로 찾았다. 엉뚱한 가게일 수 있다
-#
-# 좌표가 None인지 먼저 보면 손대지 않은 둘을 가를 수 있다. 수집원이 준 값에
-# "site"를 따로 찍지 않는 이유는, 좌표를 다 주는 브랜드는 보정을 아예 부르지
-# 않아 브랜드마다 의미가 갈리기 때문이다.
-CoordinateSource = Literal["kakao_address", "kakao_keyword"]
+# 좌표 출처. 좌표를 얻지 못한 경우에는 None으로 둔다.
+# official: 공식 사이트, kakao: Kakao 직접 수집 또는 좌표 보정
+CoordinateSource = Literal["official", "kakao"]
 
 
 @dataclass(frozen=True)

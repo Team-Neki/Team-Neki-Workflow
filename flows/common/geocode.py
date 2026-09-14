@@ -18,12 +18,12 @@
 import os
 import time
 from dataclasses import replace
-from typing import Any, Callable
+from typing import Any, Callable, Literal
 
 from prefect import get_run_logger, task
 
 from flows.common import kakao
-from flows.common.store import CollectedStore, CoordinateSource
+from flows.common.store import CollectedStore
 
 # 키워드검색 폴백에 붙이는 지역 접두의 토큰 수. 주소 앞 두 토큰이면 시/도와
 # 시군구다. 더 붙이면 사이트가 틀리게 적은 번지까지 질의에 섞여 들어간다.
@@ -45,7 +45,8 @@ GIVE_UP_AFTER = 3
 # 질의와 timeout 을 받는 Kakao 조회. kakao.search_address / search_keyword 다.
 Search = Callable[..., list[dict[str, Any]]]
 
-Point = tuple[float, float, CoordinateSource]
+# 조회 방식은 요약 로그에만 사용하고 저장 출처는 kakao로 통일한다.
+Point = tuple[float, float, Literal["kakao_address", "kakao_keyword"]]
 
 
 def _number(value: Any) -> float | None:
@@ -200,7 +201,7 @@ def fill_coordinates(
                 store,
                 longitude=longitude,
                 latitude=latitude,
-                coordinate_source=source,
+                coordinate_source="kakao",
             )
         )
 

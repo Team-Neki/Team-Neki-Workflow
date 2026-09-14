@@ -201,6 +201,8 @@ def to_store(
     jibun = (document.get("address_name") or "").strip()
     address = (document.get("road_address_name") or "").strip() or jibun
 
+    longitude = _coordinate(document.get("x"))
+    latitude = _coordinate(document.get("y"))
     return CollectedStore(
         platform=platform,
         idx=str(idx),
@@ -208,8 +210,11 @@ def to_store(
         address=address or None,
         phone=(document.get("phone") or "").strip() or None,
         # Kakao는 x가 경도, y가 위도다.
-        longitude=_coordinate(document.get("x")),
-        latitude=_coordinate(document.get("y")),
+        longitude=longitude,
+        latitude=latitude,
+        coordinate_source=(
+            "kakao" if longitude is not None and latitude is not None else None
+        ),
     )
 
 
