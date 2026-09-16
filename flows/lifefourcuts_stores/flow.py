@@ -2,6 +2,7 @@
 
 from prefect import flow, get_run_logger
 
+from flows.common.geocode import fill_coordinates
 from flows.common.imweb_map import MAX_PAGES, collect_board
 from flows.common.output import log_stores
 from flows.common.platform import Platform
@@ -18,13 +19,15 @@ def lifefourcuts_stores(
     max_pages: int = MAX_PAGES,
     delay_seconds: float = 0.5,
     persist: bool = True,
+    geocode: bool = True,
 ) -> list[CollectedStore]:
     """imweb 지도 위젯 게시판 하나를 순회한다.
 
     수집과 파싱은 flows.common.imweb_map 이 맡는다. 포토이즘, 돈룩업과 같은
     위젯이라 브랜드마다 파서를 두면 사이트 개편 때 한 곳만 고치게 된다.
 
-    persist를 끄면 S3에 적재하지 않는다. 파싱만 확인할 때 쓴다.
+    persist를 끄면 S3에 적재하지 않는다. 파싱만 확인할 때 쓴다. geocode를
+    끄면 좌표가 빈 지점을 Kakao로 채우지 않는다. 파싱만 볼 때는 둘 다 끈다.
     """
     logger = get_run_logger()
 
@@ -37,6 +40,9 @@ def lifefourcuts_stores(
         delay_seconds=delay_seconds,
         persist=persist,
     )
+
+    if geocode:
+        stores = fill_coordinates(stores, label="인생네컷")
 
     log_stores(stores, label="인생네컷")
 

@@ -18,6 +18,7 @@ flows/
   common/                 여러 워크플로가 함께 쓰는 task
     store.py              수집 공통 스키마 (CollectedStore)
     storage.py            S3 적재
+    geocode.py            좌표가 빈 지점을 Kakao로 보정
     imweb_map.py          imweb 지도 위젯 수집 (인생네컷, 포토이즘, 돈룩업)
 aws/config                로컬 개발용 AWS 프로파일
 compose.yaml              로컬 S3 (LocalStack)
@@ -109,6 +110,34 @@ flow run이 work pool 기본 이미지(베이스 prefect 이미지)로 떠서 `f
 수집 실패가 되고, 색인 규칙을 고칠 때마다 크롤링이 따라 돕니다. 픽닷, 모노맨션,
 포토그레이, 하루필름, 포토랩플러스, 비룸스튜디오는 수집원 자체가 Kakao라 예외지만,
 이 경우에도 받아온 값을 해석하지는 않습니다.
+
+### 좌표 보정만 collect 안에서 합니다
+
+이 규약의 예외가 하나 있습니다. **좌표가 빈 지점은 수집 flow 안에서 Kakao로
+채웁니다**(`flows/common/geocode.py`). 좌표가 없으면 그 지점은 색인에서 통째로
+빠지는데, enrich 단계가 아직 없어 그때까지 결측이 방치되기 때문입니다.
+
+규약이 막으려던 것은 코드로 막습니다. 이 셋 중 하나라도 깨면 예외를 유지할
+이유가 없어지므로 함께 봐야 합니다.
+
+- **Kakao 장애가 수집 실패가 되지 않습니다.** `KAKAO_API_KEY`가 없으면 경고만
+  남기고 건너뛰고, 조회 예외는 그 지점만 좌표 없이 넘깁니다. 연속 세 번 실패하면
+  남은 지점은 아예 조회하지 않습니다. 장애일 때 지점 수만큼 재시도를 되풀이하면
+  수집이 몇십 분 늘어집니다
+- **사이트가 준 값과 구분합니다.** `coordinate_source`는 공식 사이트 좌표면
+  `official`, Kakao 직접 수집이나 보정 좌표면 `kakao`로 남습니다.
+  `None`은 좌표를 얻지 못했다는 뜻입니다. 좌표는 collect 출력에서 유일하게 우리가 만든 값이 섞이는
+  필드이므로, 이 표시가 없으면 경계가 코드에서 사라집니다
+- **끌 수 있습니다.** flow의 `geocode` 파라미터를 끄면 보정하지 않습니다
+
+**주소는 여전히 해석하지 않습니다.** 원문을 그대로 질의에 넣을 뿐 층수나 상호명을
+떼지 않습니다. 주소검색이 0건이면 `"<주소 앞 2토큰> <상호명>"`으로 다시 묻는데,
+`서울 강남구 압구정로50길 27 1F`처럼 접미사가 붙어 주소검색이 실패하는 지점이
+실제로 있어 넣은 폴백입니다. 키워드검색을 먼저 쓰지 않는 이유는 질의가 주소 하나로
+닫혀 있지 않아 전국의 동명 가게를 집을 수 있기 때문입니다.
+
+보정을 부르는 브랜드는 좌표가 비는 다섯(플랜비스튜디오, 포토시그니처, 인생네컷,
+포토이즘, 돈룩업)뿐입니다. 나머지는 수집원이 Kakao라 좌표가 항상 옵니다.
 
 하루필름은 사이트에도 목록이 있지만 Kakao를 씁니다. 전체 목록 페이지에 목록이
 없어 지역 페이지 8개를 순회해야 하고, 그 목록마저 게시판이 아니라 갤러리 위젯
@@ -253,66 +282,6 @@ runs/    dt=<날짜>/collect.json
 `boto3.Session().client("s3")`에 `endpoint_url`을 넘기지 않습니다. 로컬과 운영의
 차이는 환경변수뿐이어야 합니다. 로컬은 `AWS_PROFILE=neki-local`, 운영은 k8s Secret이
 넣는 자격증명 변수입니다. 코드에 분기를 넣으면 이 성질이 깨집니다.
-
-### 배치 컨테이너 실행
-
-enrich와 index는 Spring Batch로 구현하고 Prefect가 k3s Job으로 띄웁니다. 스케줄과
-순서, 재시도는 이 저장소에 남고 계산만 컨테이너가 합니다.
-
-**배치 이미지를 work pool로 돌리지 않습니다.** Kubernetes work pool은 flow 자체를
-컨테이너로 돌리는 기능이라 이미지 안에 Prefect와 flow 코드가 있어야 합니다. flow는
-그렇게 우리 이미지로 Job 파드에서 돌고, 임의의 Java 이미지는 그 flow 안에서
-`flows/common/kubernetes.py`의 `run_job`이 별도 Job을 만들어 지켜봅니다.
-
-배치 Job은 flow 파드와 같은 네임스페이스(`prefect`)에 떠야 GitOps의 Role이 닿습니다.
-`K8S_NAMESPACE`가 비어 있으면 `default`로 가므로 work pool의 base job template
-env에서 지정해야 합니다.
-
-Job spec에서 놓치기 쉬운 것들입니다.
-
-- `backoff_limit=0` : 재시도는 Prefect가 맡음. k8s가 같이 재시도하면 의미가 겹치고
-  어느 시도의 로그인지 분간이 안 됨
-- 이름은 `generate_name`으로 k8s가 붙임. 직접 지으면 DNS-1123 제약과 중복을 직접
-  다뤄야 함
-- `finally`에서 Job 삭제. 취소했을 때 pod가 남으면 안 됨
-- pod 상태를 먼저 확인함. `ImagePullBackOff`에서 로그를 기다리면 타임아웃까지
-  멈춰 있고 원인이 드러나지 않음
-
-컨테이너 stdout은 Prefect 로그로 옮깁니다. 이게 없으면 UI에는 실패 사실만 남고
-원인은 이미 사라진 pod 안에 있습니다.
-
-권한은 GitOps 레포 `overlays/prefect/`의 Role이 줍니다. 이 저장소에는 매니페스트를
-두지 않습니다. Job의 create/get/list/watch/delete, pod의 get/list/watch, `pods/log`의
-get이면 충분합니다. pod 삭제 권한은 필요 없습니다.
-Job을 지우면 ownerReference를 따라 정리됩니다.
-
-### 최신 이미지와 재현성을 같이 얻는다
-
-`:latest`를 그대로 넘기면 최신은 쓰지만 무엇이 돌았는지 모릅니다. 실패한 실행을
-재현할 수 없고, 재시도 중간에 이미지가 바뀔 수 있으며, 노드마다 캐시가 달라
-같은 태그가 다른 것을 가리킬 수 있습니다. 반대로 태그를 고정하면 새 배포가
-반영되지 않습니다.
-
-그래서 `flows/common/registry.py`의 `resolve`가 실행 시점에 태그가 지금 가리키는
-다이제스트를 조회하고, `run_job`이 그것으로 실행합니다.
-
-```text
-alpine:3.20  ->  registry-1.docker.io/library/alpine@sha256:d9e853e8...
-```
-
-**태그는 배포 편의를 위해 남기고, 실행은 다이제스트로 합니다.** Spring 쪽은
-`:latest`로 계속 밀어도 되고, 우리는 그때그때 최신을 집으면서 어느 다이제스트가
-돌았는지 로그에 남깁니다. 롤백은 `image` 파라미터에 다이제스트를 직접 주면
-됩니다.
-
-`image_pull_policy`도 여기 맞춥니다. 다이제스트는 불변이라 `IfNotPresent`로
-캐시를 믿어도 되고, 태그를 그대로 쓸 때만 `Always`여야 최신이 보장됩니다.
-`pin_digest=False`는 레지스트리를 부를 수 없는 환경에서만 씁니다.
-
-**해석은 flow run 단위로 한 번만 합니다.** task를 재시도할 때마다 다시 해석하면
-그사이 새 이미지가 올라왔을 때 1차 시도와 2차 시도가 다른 코드를 돌게 됩니다.
-한 번의 실행은 하나의 이미지로 끝나야 합니다. `_resolve_once`가 flow run id를
-캐시 키로 써서 이를 보장하며, 다음 flow run은 id가 달라 다시 최신을 집습니다.
 
 ## build() 규약
 
@@ -473,6 +442,12 @@ make s3-ls
 `picdot`, `monomansion`, `photogray`, `harufilm`, `photolabplus`, `broomstudio`는
 `KAKAO_API_KEY`가 있어야 돕니다. 키가 없으면 `flows/common/kakao.py`의 `api_key()`가
 `RuntimeError`로 막습니다.
+
+`planbstudio`, `photosignature`, `lifefourcuts`, `photoism`, `dontlxxkup`은 키가
+없어도 돌지만 좌표 보정만 건너뜁니다. `geocode.py`를 고쳤다면 이 다섯을 키가 있는
+상태와 없는 상태로 모두 돌려, 없을 때 수집 자체는 끝까지 가는지 봐야 합니다.
+보정 자체는 요약 로그(`없던 N건 중 주소로 …`)와 적재물의 `coordinate_source`로
+확인합니다.
 
 적재를 건드렸다면 실행 결과가 아니라 적재물을 봐야 합니다. `make s3-ls`로 키가
 빠짐없이 올라갔는지 보고, 같은 flow를 두 번 돌려 키 수가 늘지 않는지 확인합니다.
