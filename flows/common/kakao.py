@@ -1,4 +1,4 @@
-"""Kakao 장소검색 공용 클라이언트.
+"""Kakao 장소검색, 주소검색 공용 클라이언트.
 
 한 질의로 꺼낼 수 있는 문서는 45건까지다. 지점이 그보다 많은 브랜드는 질의를
 쪼개야 하는데, 행정구역 이름으로 쪼개면 개편을 따라다녀야 한다. 대신 좌표
@@ -19,6 +19,7 @@ from flows.common.platform import Platform
 from flows.common.store import CollectedStore
 
 SEARCH_URL = "https://dapi.kakao.com/v2/local/search/keyword.json"
+ADDRESS_URL = "https://dapi.kakao.com/v2/local/search/address.json"
 
 API_KEY_ENV = "KAKAO_API_KEY"
 
@@ -58,6 +59,18 @@ def quarters(rect: Rect) -> list[Rect]:
     ]
 
 
+def get(url: str, params: dict[str, Any], *, timeout: float = 20.0) -> dict[str, Any]:
+    """Kakao 응답 하나. 키가 로그에 남지 않도록 헤더로만 넘긴다."""
+    response = httpx.get(
+        url,
+        params=params,
+        headers={"Authorization": f"KakaoAK {api_key()}"},
+        timeout=timeout,
+    )
+    response.raise_for_status()
+    return response.json()
+
+
 @task(retries=3, retry_delay_seconds=[2, 5, 10])
 def search_page(
     query: str,
@@ -66,22 +79,32 @@ def search_page(
     rect: Rect | None = None,
     timeout: float = 20.0,
 ) -> dict[str, Any]:
-    """장소검색 한 페이지를 받아온다.
-
-    키가 로그에 남지 않도록 헤더로만 넘긴다.
-    """
+    """장소검색 한 페이지를 받아온다."""
     params: dict[str, Any] = {"query": query, "page": page, "size": PAGE_SIZE}
     if rect:
         params["rect"] = ",".join(str(value) for value in rect)
 
-    response = httpx.get(
-        SEARCH_URL,
-        params=params,
-        headers={"Authorization": f"KakaoAK {api_key()}"},
-        timeout=timeout,
-    )
-    response.raise_for_status()
-    return response.json()
+    return get(SEARCH_URL, params, timeout=timeout)
+
+
+def search_address(query: str, *, timeout: float = 20.0) -> list[dict[str, Any]]:
+    """주소를 좌표로 바꾼다. 질의가 주소 하나로 닫혀 있어 엉뚱한 곳을 집지 않는다.
+
+    지오코딩은 지점 수만큼 호출이 나므로 @task 로 감싸지 않는다. task run 이
+    지점마다 하나씩 생기면 Prefect API 가 그것만으로 몸살을 앓고, UI 에서도
+    정작 봐야 할 flow run 이 묻힌다. 재시도는 호출부가 정한다.
+    """
+    payload = get(ADDRESS_URL, {"query": query, "size": 1}, timeout=timeout)
+    return payload.get("documents") or []
+
+
+def search_keyword(query: str, *, timeout: float = 20.0) -> list[dict[str, Any]]:
+    """장소검색 첫 문서만 본다. 주소로 안 잡히는 지점의 폴백이다.
+
+    search_page 와 달리 @task 가 아닌 이유는 search_address 와 같다.
+    """
+    payload = get(SEARCH_URL, {"query": query, "size": 1}, timeout=timeout)
+    return payload.get("documents") or []
 
 
 def _drain(query: str, rect: Rect, meta: dict[str, Any]) -> list[dict[str, Any]]:
@@ -178,6 +201,8 @@ def to_store(
     jibun = (document.get("address_name") or "").strip()
     address = (document.get("road_address_name") or "").strip() or jibun
 
+    longitude = _coordinate(document.get("x"))
+    latitude = _coordinate(document.get("y"))
     return CollectedStore(
         platform=platform,
         idx=str(idx),
@@ -185,8 +210,11 @@ def to_store(
         address=address or None,
         phone=(document.get("phone") or "").strip() or None,
         # Kakao는 x가 경도, y가 위도다.
-        longitude=_coordinate(document.get("x")),
-        latitude=_coordinate(document.get("y")),
+        longitude=longitude,
+        latitude=latitude,
+        coordinate_source=(
+            "kakao" if longitude is not None and latitude is not None else None
+        ),
     )
 
 

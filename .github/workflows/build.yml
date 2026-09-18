@@ -1,0 +1,109 @@
+# main 에 merge 되면 이미지를 GHCR 에 올리고 GitOps 레포의 태그를 갱신한다.
+#
+# Prefect 서버는 외부에 노출되지 않으므로 여기서 서버를 건드리지 않는다.
+# deployment 등록(deploy.py)은 워커 파드의 initContainer 가 클러스터 안에서 한다.
+#
+#   merge -> 이미지 빌드/푸시 -> GitOps worker.yaml image 태그 커밋 -> ArgoCD 가 worker 롤링
+#         -> initContainer 가 deploy.py 실행 -> 다음 run 부터 새 코드
+name: build
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "**.md"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+# GitOps 커밋이 겹치면 rebase 로 풀리지 않는 충돌이 나므로 직렬화한다.
+concurrency:
+  group: build-main
+  cancel-in-progress: false
+
+env:
+  IMAGE: ghcr.io/team-neki/team-neki-workflow
+  GITOPS_REPO: Team-Neki/Team-Neki-GitOps
+  GITOPS_PATH: overlays/prefect/worker.yaml
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      # 조직 secret 이 이 저장소에 열려 있지 않으면 아래 GitOps checkout 이
+      # "Input required and not supplied: token" 으로만 끝나 원인이 드러나지 않는다.
+      # 이미지를 밀기 전에 막아 GitOps 가 가리키지 않는 태그를 남기지 않는다.
+      - name: Check GitOps token
+        env:
+          GITOPS_PAT: ${{ secrets.GITOPS_PAT }}
+        run: |
+          test -n "$GITOPS_PAT" || {
+            echo "::error::GITOPS_PAT 가 이 저장소에서 보이지 않는다. Team-Neki 조직 secret 을 이 저장소에 열어야 한다. 절차는 docs/runbook.md 의 'GitOps 토큰은 무엇이고 어디에 있나?' 절."
+            exit 1
+          }
+
+      # 태그는 <pyproject version>-<sha7>. main 태그도 같이 올려 최신을 가리킨다.
+      - name: Resolve image tag
+        id: tag
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' pyproject.toml)
+          echo "tag=${version}-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      # IMAGE_REF 를 이미지 안에 굽는다. deploy.py 가 Job 파드 이미지로 쓴다.
+      - name: Build and push
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          docker build --build-arg IMAGE_REF="$IMAGE:$TAG" -t "$IMAGE:$TAG" -t "$IMAGE:main" .
+          docker push "$IMAGE:$TAG"
+          docker push "$IMAGE:main"
+
+      # GITOPS_PAT: Team-Neki 조직 secret. GitOps 레포에 contents:write 권한이 있는 PAT 로
+      # 다른 저장소 CI 와 같은 것을 쓴다. 조직 설정에서 이 저장소에 열려 있어야 한다.
+      - uses: actions/checkout@v5
+        with:
+          repository: ${{ env.GITOPS_REPO }}
+          token: ${{ secrets.GITOPS_PAT }}
+          path: gitops
+
+      - name: Update image tag in GitOps repo
+        working-directory: gitops
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          # admin-web 과 같은 방식. worker.yaml 은 register-deployments initContainer 와
+          # prefect-worker 컨테이너 두 곳에서 이 이미지를 참조하므로 둘을 같은 태그로 바꿔야 한다.
+          # sed 는 대상을 못 찾아도 조용히 성공한다. 갱신 전 참조 개수를 세어 두고
+          # 갱신 뒤 그 개수만큼 새 태그가 됐는지 대조하는 것이 유일한 안전장치다.
+          # 한 줄만 바뀌고 다른 줄이 남으면 initContainer 와 worker 의 버전이 갈린 채 배포된다.
+          before=$(grep -cE "^[[:space:]]*image: $IMAGE:" "$GITOPS_PATH" || true)
+          test "$before" -ge 1 || {
+            echo "::error::$GITOPS_PATH 에서 $IMAGE 참조를 찾지 못했다."
+            exit 1
+          }
+          sed -i -E "s#^([[:space:]]*image: )$IMAGE:.*#\\1$IMAGE:$TAG#" "$GITOPS_PATH"
+          after=$(grep -cE "^[[:space:]]*image: $IMAGE:$TAG$" "$GITOPS_PATH" || true)
+          test "$after" = "$before" || {
+            echo "::error::$IMAGE 참조 $before 개 중 $after 개만 $TAG 로 갱신됐다."
+            exit 1
+          }
+          if git diff --quiet; then
+            echo "already at $TAG"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git commit -am "chore(prefect): update image to $TAG"
+          # 다른 레포의 CI 도 같은 GitOps 레포에 커밋하므로 push 직전에 rebase 한다.
+          for i in 1 2 3; do
+            git pull --rebase && git push && exit 0
+            sleep $((i * 5))
+          done
+          exit 1
