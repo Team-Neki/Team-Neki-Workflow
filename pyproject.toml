@@ -1,17 +1,17 @@
 [project]
 name = "team-neki-workflow"
-version = "0.1.0"
+version = "0.1.1"
 description = "Team Neki Prefect 워크플로"
 requires-python = ">=3.13"
 dependencies = [
-    "prefect>=3.8.0",
+    # Dockerfile 베이스 이미지(prefecthq/prefect:3.8.5-*)와 같은 버전이어야 한다.
+    # 다르면 이미지 안의 prefect/prefect-kubernetes 가 교체되어 worker 가 깨진다.
+    "prefect==3.8.5",
     "httpx>=0.28.0",
     "beautifulsoup4>=4.12.0",
     "lxml>=5.0.0",
     # 프로파일의 endpoint_url 을 읽으려면 botocore 1.31 이상이 필요하다.
     "boto3>=1.34.0",
-    # k3s Job 으로 배치 컨테이너를 실행한다.
-    "kubernetes>=31.0.0",
     # 법정동 코드를 Postgres 에 적재한다. binary 판을 쓰면 libpq 를 따로 깔지
     # 않아도 된다.
     "psycopg[binary]>=3.2.0",

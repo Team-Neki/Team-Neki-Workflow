@@ -74,6 +74,7 @@ def extract_stores(html: str) -> tuple[list[CollectedStore], int]:
                 # LatLng(위도, 경도) 순서다. 경도가 두 번째임에 주의한다.
                 longitude=float(coord.group(2)) if coord else None,
                 latitude=float(coord.group(1)) if coord else None,
+                coordinate_source="official" if coord else None,
             )
         )
 

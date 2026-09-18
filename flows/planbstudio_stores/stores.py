@@ -93,6 +93,9 @@ def extract_stores(
                 phone=_clean(phones[position]) if position < len(phones) else None,
                 longitude=longitude,
                 latitude=latitude,
+                coordinate_source=(
+                    "official" if longitude is not None and latitude is not None else None
+                ),
             )
         )
 

@@ -123,6 +123,8 @@ def extract_stores(
             skipped.append(container.get("id") or "(id 없음)")
             continue
 
+        longitude = _coordinate(container, "input._pos_x_temp")
+        latitude = _coordinate(container, "input._pos_y_temp")
         stores.append(
             CollectedStore(
                 platform=platform,
@@ -131,8 +133,11 @@ def extract_stores(
                 # 사이트가 address를 adress로 표기한다. 오타지만 그대로 맞춰야 한다.
                 address=_text(container.select_one("p.adress")),
                 phone=_phone(container),
-                longitude=_coordinate(container, "input._pos_x_temp"),
-                latitude=_coordinate(container, "input._pos_y_temp"),
+                longitude=longitude,
+                latitude=latitude,
+                coordinate_source=(
+                    "official" if longitude is not None and latitude is not None else None
+                ),
             )
         )
 

@@ -1,0 +1,15 @@
+# Dockerfile 이 필요한 경로만 COPY 하므로 여기는 빌드 컨텍스트 크기와
+# 비밀값 유입을 막는 용도다.
+.git
+.venv
+.env
+.env.*
+dist
+build
+__pycache__
+*.py[cod]
+aws
+compose.yaml
+.omc
+.github
+.prefect
