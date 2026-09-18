@@ -87,7 +87,10 @@ flow run이 work pool 기본 이미지(베이스 prefect 이미지)로 떠서 `f
 - entrypoint가 cwd 기준 상대경로라 worker와 Job 모두 `/opt/prefect`에서 실행됨
 - 파드는 uid 1001, 루트 파일시스템 읽기 전용일 수 있음. 이미지 경로에 쓰지 않고
   파일은 root 소유 644로 둠
-- 자격증명은 k8s Secret이 환경변수로 넣음. IAM role 없음. 코드는 환경변수만 봄
+- 자격증명은 GitOps의 k8s Secret `prefect-workflow`가 flow run Job 파드 환경변수로
+  넣음 (`worker-base-job-template.json`의 envFrom). worker 파드가 아님. IAM role 없음.
+  코드는 환경변수만 봄. 새 환경변수를 읽는 flow를 추가하면 GitOps의
+  `workflow-secret.example.yaml`에 키를 같이 추가함
 - `pyproject.toml`의 prefect 버전은 Dockerfile 베이스와 같아야 함. 다르면 uv.lock
   설치가 베이스의 prefect를 덮어써 prefect-kubernetes가 깨지고 worker가 뜨지 않음.
   `make image`가 버전을 assert함
