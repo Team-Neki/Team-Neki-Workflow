@@ -22,7 +22,7 @@ sequenceDiagram
     Dev->>GH: PR (ci.yml)
     Dev->>GH: main merge (build.yml)
     GH->>GHCR: push :<version>-<sha7>, :main
-    GH->>GitOps: overlays/prefect/kustomization.yaml newTag 커밋
+    GH->>GitOps: overlays/prefect/worker.yaml image 태그 커밋
     Argo->>GitOps: main 폴링
     Argo->>Worker: worker Deployment 롤링
     Worker->>API: initContainer가 python deploy.py 실행 (등록 갱신, pause 보존)
@@ -108,8 +108,8 @@ docker pull ghcr.io/team-neki/team-neki-workflow:main
 이 저장소가 아니라 Team-Neki-GitOps `overlays/prefect/`에 있어야 하는 것들입니다.
 하나라도 빠지면 아래 "어디서 실패하나"의 증상으로 드러납니다.
 
-- `kustomization.yaml`의 `images[]`에 `name: ghcr.io/team-neki/team-neki-workflow` 항목 : build.yml이 이 항목의 `newTag`를 바꿈
-- worker Deployment가 위 이미지를 쓰고, initContainer가 `/opt/prefect`에서 `python deploy.py`를 실행함
+- `worker.yaml`의 register-deployments initContainer와 prefect-worker 컨테이너가 `image: ghcr.io/team-neki/team-neki-workflow:<태그>`를 씀 : build.yml이 이 `image:` 줄들을 같은 태그로 바꿈 (admin-web과 같은 방식)
+- 위 initContainer가 `/opt/prefect`에서 `python deploy.py`를 실행함
 - initContainer env : `PREFECT_API_URL`, `PREFECT_WORK_POOL=neki-pool`
 - work pool `neki-pool`의 base job template env : `KAKAO_API_KEY` (k8s Secret 참조)
 
@@ -142,14 +142,17 @@ kubectl -n prefect rollout restart deploy/prefect-worker
 
 ### 이전 이미지로 되돌리기
 
-GHCR에 이전 태그가 남아 있으므로 GitOps의 `newTag`를 그 태그로 바꿔 커밋하면 됩니다.
+GHCR에 이전 태그가 남아 있으므로 GitOps `worker.yaml`의 `image:` 줄들을 그 태그로 바꿔 커밋하면
+됩니다. initContainer와 worker 컨테이너 두 곳이므로 둘을 같이 바꿔야 합니다.
 Actions를 거치지 않습니다. 다음 merge가 다시 최신으로 덮으므로, 코드 자체를 되돌려야
 한다면 이 저장소에서 revert PR을 올리는 것이 맞습니다.
 
 ```bash
 cd Team-Neki-GitOps
-yq -i '(.images[] | select(.name == "ghcr.io/team-neki/team-neki-workflow")).newTag = "0.1.0-a1b2c3d"' \
-  overlays/prefect/kustomization.yaml
+# macOS/Linux 공통. (GNU sed 만 있는 CI 와 달리 로컬 BSD sed 는 -i 인자 형식이 달라 perl 을 쓴다)
+perl -pi -e 's#^(\s*image: )ghcr.io/team-neki/team-neki-workflow:.*#${1}ghcr.io/team-neki/team-neki-workflow:0.1.0-a1b2c3d#' \
+  overlays/prefect/worker.yaml
+grep -n 'image: ghcr.io/team-neki/team-neki-workflow:' overlays/prefect/worker.yaml  # 두 줄 모두 새 태그인지 확인
 git commit -am "chore(prefect): rollback image to 0.1.0-a1b2c3d" && git push
 ```
 
@@ -173,8 +176,7 @@ Prefect UI에서 deployment를 pause합니다. `deploy.py`가 배포 전 상태�
 
 | 증상 | 원인 | 조치 |
 |---|---|---|
-| build.yml "Update image tag" 단계의 `test ... = "$TAG"` 실패 | GitOps `images[]`에 이미지 이름 항목이 없음 | `overlays/prefect/kustomization.yaml`에 항목 추가. 아래 주의 |
-| 배포가 초록불인데 worker 이미지가 그대로 | `images[]` 항목은 있지만 그 이름을 참조하는 매니페스트가 없음 | `worker.yaml`의 이미지 이름과 `images[].name`을 대조 |
+| build.yml "Update image tag" 단계가 `참조를 찾지 못했다` 또는 `N 개 중 M 개만 갱신됐다`로 실패 | GitOps `worker.yaml`의 `image:` 줄이 없거나 이미지 이름이 다름 | `overlays/prefect/worker.yaml`의 `image: ghcr.io/team-neki/team-neki-workflow:<태그>` 줄 확인. 아래 주의 |
 | build.yml "Check GitOps token" 단계에서 `GITOPS_PAT 가 이 저장소에서 보이지 않는다` | 조직 secret이 이 저장소에 열려 있지 않음 | 위 "GitOps 토큰" 절차 |
 | GitOps checkout 또는 push에서 403 | `GITOPS_PAT`가 만료됐거나 발급자에게 GitOps write 권한이 없음 | 위 "GitOps 토큰" 절차의 재발급 |
 | worker 파드 `ImagePullBackOff` | 패키지가 private이거나 태그가 없음 | 패키지를 public으로. 태그는 Actions 로그와 대조 |
@@ -183,11 +185,11 @@ Prefect UI에서 deployment를 pause합니다. `deploy.py`가 배포 전 상태�
 | worker가 `prefect_kubernetes` import 실패로 못 뜸 | `pyproject.toml`의 prefect 버전이 Dockerfile 베이스와 다름 | 둘을 맞추고 `make image`로 확인 (assert가 잡음) |
 | 꺼둔 스케줄이 되살아남 | `deploy.py`를 거치지 않고 `prefect deploy` 등을 직접 호출함 | 등록은 `deploy.py`로만 |
 
-**`images[]` 항목만 추가하는 것으로는 부족합니다.** kustomize의 이미지 변환은
-매니페스트가 그 이름을 참조할 때만 먹습니다. 참조가 없으면 `newTag`를 바꿔도 아무
-일도 일어나지 않는데, `yq`와 `test`는 통과하고 커밋과 push, ArgoCD sync까지 다
-됩니다. **실패가 사라지고 배포만 안 되는 상태**가 되므로, 항목을 추가할 때는
-`worker.yaml`이 그 이미지를 참조하는지 같이 봐야 합니다.
+**`worker.yaml`에서 이 이미지를 참조하는 컨테이너를 추가하거나 빼면 build.yml의 갱신
+스텝을 같이 봐야 합니다.** build.yml은 `image: ghcr.io/team-neki/team-neki-workflow:` 로
+시작하는 줄을 전부 `sed`로 바꾸고, 바뀐 개수가 갱신 전 참조 개수와 같은지 대조합니다.
+이미지 이름을 바꾸거나 태그를 다른 형태로 적으면 참조를 못 찾아 CI가 실패하고, 이는
+의도된 동작입니다. 조용히 배포만 안 되는 상태보다 낫습니다.
 
 파드 안을 직접 봐야 할 때는 실행 중인 이미지로 셸을 엽니다. 파드는 uid 1001, 읽기 전용
 루트로 뜨므로 로컬에서도 같은 조건으로 재현하는 것이 좋습니다.
