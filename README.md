@@ -390,7 +390,7 @@ make serve PORT=4300
 ```text
 main merge
   -> build.yml      이미지 빌드, ghcr.io/team-neki/team-neki-workflow:<version>-<sha7> 와 :main 푸시
-  -> build.yml      Team-Neki-GitOps overlays/prefect/kustomization.yaml 의 newTag 커밋
+  -> build.yml      Team-Neki-GitOps overlays/prefect/worker.yaml 의 image 태그 커밋
   -> ArgoCD         worker Deployment 롤링
   -> initContainer  /opt/prefect 에서 python deploy.py (deployment 등록 갱신, pause 보존)
   -> 다음 flow run 부터 새 이미지
