@@ -6,8 +6,8 @@
 
 Prefect Block 을 쓰지 않는다. Block 은 UI 에서 값을 바꿀 수 있어 편하지만
 설정이 Prefect 서버 상태에 얹히므로, 서버를 갈아치우거나 다른 환경에서 같은
-flow 를 돌릴 때 값이 따라오지 않는다. 환경변수는 worker 를 띄우는 쪽이 들고
-있으므로 그럴 일이 없다.
+flow 를 돌릴 때 값이 따라오지 않는다. 환경변수는 운영이면 GitOps 의 k8s Secret
+(prefect-workflow) 이, 로컬이면 .env 가 들고 있으므로 그럴 일이 없다.
 """
 
 import os
@@ -29,7 +29,8 @@ def dsn() -> str:
     if not value:
         raise RuntimeError(
             f"{DSN_ENV} 환경변수가 없습니다. 로컬은 .env.example 을 복사해 값을 "
-            "채우고, 운영은 worker 환경변수로 넣으세요."
+            "채우고, 운영은 GitOps 의 prefect-workflow Secret 에 넣으세요 "
+            "(flow run Job 파드 환경변수. worker 파드가 아닙니다)."
         )
     return value
 
