@@ -111,7 +111,7 @@ docker pull ghcr.io/team-neki/team-neki-workflow:main
 - `worker.yaml`의 register-deployments initContainer와 prefect-worker 컨테이너가 `image: ghcr.io/team-neki/team-neki-workflow:<태그>`를 씀 : build.yml이 이 `image:` 줄들을 같은 태그로 바꿈 (admin-web과 같은 방식)
 - 위 initContainer가 `/opt/prefect`에서 `python deploy.py`를 실행함
 - initContainer env : `PREFECT_API_URL`, `PREFECT_WORK_POOL=neki-pool`
-- work pool `neki-pool`의 base job template env : `KAKAO_API_KEY` (k8s Secret 참조)
+- k8s Secret `prefect-workflow` (`workflow-secret.yaml`, gitignore) : `KAKAO_API_KEY`, `DATABASE_URL`. `worker-base-job-template.json`의 `envFrom`이 이 Secret을 flow run Job 파드에 넣음. **worker.yaml에 env를 넣어도 flow에는 전달되지 않음**. Secret이 없으면 모든 flow run이 `CreateContainerConfigError`로 뜨지 않음
 
 ## merge할 때 확인하는 것
 
@@ -182,6 +182,9 @@ Prefect UI에서 deployment를 pause합니다. `deploy.py`가 배포 전 상태�
 | worker 파드 `ImagePullBackOff` | 패키지가 private이거나 태그가 없음 | 패키지를 public으로. 태그는 Actions 로그와 대조 |
 | initContainer가 `work pool이 지정되지 않았습니다`로 종료 | `PREFECT_WORK_POOL` env 누락 | GitOps worker 매니페스트 |
 | flow run 파드에서 `ModuleNotFoundError: flows` | deployment에 `image`가 없어 기본 prefect 이미지로 뜸 | initContainer 로그에 `이미지:` 줄이 있는지 확인. 없으면 `WORKFLOW_IMAGE`가 구워지지 않은 이미지 |
+| flow run Job 파드가 `CreateContainerConfigError` | GitOps `prefect-workflow` Secret이 클러스터에 없음 | `kubectl -n prefect get secret prefect-workflow`. 없으면 `workflow-secret.yaml` apply |
+| `legal-dong`, `subway-station`이 `DATABASE_URL 환경변수가 없습니다`로 실패 | Secret에 `DATABASE_URL` 키가 비어 있음 | Secret 값 채우고 다시 apply. 다음 run부터 반영 |
+| `DATABASE_URL`은 있는데 `connection refused` | HOST를 `localhost`로 적음. 파드 안의 localhost는 파드 자신 | 노드 IP 또는 클러스터 Service 주소로 |
 | worker가 `prefect_kubernetes` import 실패로 못 뜸 | `pyproject.toml`의 prefect 버전이 Dockerfile 베이스와 다름 | 둘을 맞추고 `make image`로 확인 (assert가 잡음) |
 | 꺼둔 스케줄이 되살아남 | `deploy.py`를 거치지 않고 `prefect deploy` 등을 직접 호출함 | 등록은 `deploy.py`로만 |
 
