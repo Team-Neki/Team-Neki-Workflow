@@ -156,6 +156,35 @@ grep -n 'image: ghcr.io/team-neki/team-neki-workflow:' overlays/prefect/worker.y
 git commit -am "chore(prefect): rollback image to 0.1.0-a1b2c3d" && git push
 ```
 
+### 브랜치를 머지 전에 올려 보기
+
+PR 을 머지하기 전에 그 브랜치 코드로 flow 를 실제 클러스터에서 한 번 돌려 보고 싶을 때
+씁니다. Actions 탭 > build > Run workflow 에서 **Use workflow from 은 main 으로 두고**
+`ref` 에 브랜치명을 적습니다. 실행되는 build.yml 은 main 의 것이므로 그 브랜치에
+build.yml 이 없어도 됩니다.
+
+```text
+Run workflow
+  Use workflow from : main
+  ref               : feature/BACKEND-103-flow-postgres
+```
+
+일어나는 일은 main merge 와 같습니다. 이미지가 `<그 브랜치 pyproject version>-<sha7>` 로
+올라가고, GitOps `worker.yaml` 의 태그가 바뀌어 worker 가 롤링되고, initContainer 가
+그 브랜치의 `deployments/` 를 등록합니다. 다른 점은 둘입니다.
+
+- `:main` 태그는 옮기지 않습니다. `:main` 은 main 이 가리키는 이미지라는 뜻을 유지합니다
+- GitOps 커밋 메시지에 `(from <브랜치>, 머지 전 테스트 배포)` 가 붙어 이력에서 구분됩니다
+
+**Prefect 환경은 하나입니다.** 브랜치를 올리면 그 시간 동안 운영 worker 가 그 브랜치
+코드로 돕니다. main 에만 있는 deployment 는 서버에 남아 있지만 job image 는 이전 태그를
+유지하므로, 브랜치가 main 보다 뒤처져 있으면 그 사이 main 의 수정은 반영되지 않습니다.
+확인이 끝나면 `ref` 를 비우고 다시 실행해 main 으로 되돌립니다. 다음 main merge 가
+있어도 되돌아갑니다.
+
+`ci.yml` 은 `pull_request` 에만 돌므로 이 경로로는 `make check` 가 실행되지 않습니다.
+PR 의 ci 가 초록인 브랜치만 올리세요.
+
 ### 클러스터 밖에서 직접 등록하기
 
 initContainer를 기다리지 않고 지금 등록을 갱신하려면 터널을 열고 `make deploy`를 씁니다.
