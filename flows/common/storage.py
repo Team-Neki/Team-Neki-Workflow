@@ -8,14 +8,21 @@ worker의 IAM role이 실제 S3를 가리킨다. 이관은 프로파일 교체�
 레이아웃은 다음과 같다.
 
     raw/     platform=<브랜드>/dt=<날짜>/<이름>.gz
-    collect/ platform=<브랜드>/dt=<날짜>/stores.jsonl.gz
+    collect/ platform=<브랜드>/dt=<날짜>/stores.csv.gz
                                        /_manifest.json
 
 `dt=` Hive 파티션이라 이후 Glue나 Athena를 그대로 붙일 수 있다. 포맷은
-JSONL+gzip이다. 아직 스키마가 흔들리고 있어 Parquet은 이르다.
+CSV+gzip이다. 다음 단계가 Postgres COPY로 그대로 받고, 사람이 볼 때도
+스프레드시트로 바로 열린다. 스키마가 아직 흔들리고 있어 Parquet은 이르다.
+
+CSV는 타입이 없어 읽는 쪽이 되돌려야 한다. 열 목록이 곧 계약이므로 `COLUMNS`가
+정본이고, 여기 없는 필드를 적재하면 `DictWriter`가 막는다. manifest는 중첩
+구조라 CSV로 표현할 수 없어 JSON으로 남긴다.
 """
 
+import csv
 import gzip
+import io
 import json
 import os
 from dataclasses import asdict, is_dataclass
@@ -38,9 +45,26 @@ COLLECT_PREFIX = "collect"
 # 깨진다.
 RUNS_PREFIX = "runs"
 
-STORES_NAME = "stores.jsonl.gz"
+STORES_NAME = "stores.csv.gz"
 MANIFEST_NAME = "_manifest.json"
 RUN_MANIFEST_NAME = "collect.json"
+
+# CSV 열 순서. 적재물의 스키마 계약이라 CollectedStore에 필드를 더하면 여기에도
+# 넣어야 한다. 빠뜨리면 조용히 누락되지 않고 DictWriter가 ValueError로 막는다.
+COLUMNS = (
+    "platform",
+    "idx",
+    "name",
+    "address",
+    "phone",
+    "longitude",
+    "latitude",
+    "coordinate_source",
+    "collected_at",
+)
+
+# 숫자로 되돌릴 열. CSV는 전부 문자열로 나오므로 읽는 쪽이 복원한다.
+FLOAT_COLUMNS = ("longitude", "latitude")
 
 # 파티션 날짜는 KST를 쓴다. 새벽 3시 실행을 UTC로 끊으면 전날 파티션에 들어가
 # 운영자가 보는 날짜와 어긋난다.
@@ -72,7 +96,7 @@ def partition(prefix: str, *, platform: Platform, dt: date) -> str:
 
 
 def _record(store: Any, *, collected_at: datetime) -> dict[str, Any]:
-    """dataclass를 JSON 한 줄로 옮긴다.
+    """dataclass를 CSV 한 줄로 옮긴다.
 
     collected_at을 여기서 붙인다. enrich가 4개 브랜드를 한 파일로 합치고 나면
     브랜드마다 수집 시각이 다를 수 있어(한 브랜드만 실패해 어제 것을 쓰는 경우)
@@ -109,18 +133,22 @@ def put_stores(
     client = _client()
     base = partition(COLLECT_PREFIX, platform=platform, dt=dt)
 
-    lines = [
-        json.dumps(_record(store, collected_at=collected_at), ensure_ascii=False)
-        for store in stores
-    ]
-    body = gzip.compress("\n".join(lines).encode("utf-8"))
+    buffer = io.StringIO()
+    # lineterminator를 지정한다. 기본값이 CRLF라 그대로 두면 Postgres COPY가
+    # 마지막 열 끝에 \r을 붙여 읽는다.
+    writer = csv.DictWriter(buffer, fieldnames=COLUMNS, lineterminator="\n")
+    writer.writeheader()
+    for store in stores:
+        writer.writerow(_record(store, collected_at=collected_at))
+
+    body = gzip.compress(buffer.getvalue().encode("utf-8"))
 
     client.put_object(Bucket=bucket, Key=f"{base}/{STORES_NAME}", Body=body)
 
     manifest = {
         "platform": str(platform),
         "dt": f"{dt:%Y-%m-%d}",
-        "count": len(lines),
+        "count": len(stores),
         "collected_at": collected_at.isoformat(),
         # task 안에서도 부모 flow run을 가리킨다. 적재물에서 실행 로그로
         # 되짚어갈 수 있어야 원인을 찾는다.
@@ -132,7 +160,7 @@ def put_stores(
         Body=json.dumps(manifest, ensure_ascii=False, indent=2).encode("utf-8"),
     )
 
-    logger.info("s3://%s/%s 에 %d건 적재", bucket, base, len(lines))
+    logger.info("s3://%s/%s 에 %d건 적재", bucket, base, len(stores))
     return f"s3://{bucket}/{base}"
 
 
@@ -246,10 +274,25 @@ def latest_dt(platform: Platform) -> date | None:
     return date.fromisoformat(max(partitions))
 
 
+def _restore(row: dict[str, str]) -> dict[str, Any]:
+    """CSV 한 줄을 적재 전 타입으로 되돌린다.
+
+    CSV에는 null이 없어 빈 칸과 빈 문자열을 구분하지 못한다. 수집 단계는 값이
+    없을 때만 None을 넣고 빈 문자열을 담지 않으므로, 빈 칸은 None으로 읽는다.
+    """
+    record: dict[str, Any] = {key: value or None for key, value in row.items()}
+    for key in FLOAT_COLUMNS:
+        if record.get(key) is not None:
+            record[key] = float(record[key])
+    return record
+
+
 def read_stores(*, platform: Platform, dt: date) -> list[dict[str, Any]]:
     """collect 파티션을 읽는다. enrich와 검증이 쓴다.
 
-    manifest의 count와 실제 줄 수가 다르면 적재가 중간에 끊긴 것이므로 막는다.
+    manifest의 count와 실제 건수가 다르면 적재가 중간에 끊긴 것이므로 막는다.
+    줄이 아니라 CSV 레코드를 센다. 주소에 줄바꿈이 섞이면 한 레코드가 여러
+    줄로 인용되므로 줄 수로 세면 건수가 부풀려진다.
     """
     bucket = _bucket()
     client = _client()
@@ -257,7 +300,7 @@ def read_stores(*, platform: Platform, dt: date) -> list[dict[str, Any]]:
 
     body = client.get_object(Bucket=bucket, Key=f"{base}/{STORES_NAME}")["Body"].read()
     text = gzip.decompress(body).decode("utf-8")
-    records = [json.loads(line) for line in text.splitlines() if line]
+    records = [_restore(row) for row in csv.DictReader(io.StringIO(text))]
 
     manifest = json.loads(
         client.get_object(Bucket=bucket, Key=f"{base}/{MANIFEST_NAME}")["Body"].read()

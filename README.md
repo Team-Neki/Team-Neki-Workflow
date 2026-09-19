@@ -96,13 +96,14 @@ S3를 거치므로 한 번에 끝나지 않고 스케줄을 나눠야 하는 트
 ```text
 s3://<bucket>/
   raw/     platform=LIFE_FOUR_CUT/dt=2026-08-02/page-001.html.gz
-  collect/ platform=LIFE_FOUR_CUT/dt=2026-08-02/stores.jsonl.gz
+  collect/ platform=LIFE_FOUR_CUT/dt=2026-08-02/stores.csv.gz
                                               /_manifest.json
   runs/    dt=2026-08-02/collect.json
 ```
 
 - `dt=` : Hive 파티션. 이후 Glue나 Athena를 그대로 붙일 수 있음
-- 포맷 : JSONL + gzip. 스키마가 아직 흔들려 Parquet은 이른 단계임
+- 포맷 : 헤더 있는 CSV + gzip. 다음 단계가 Postgres `COPY`로 그대로 받음.
+  스키마가 아직 흔들려 Parquet은 이른 단계임
 - `_manifest.json` : `count`, `collected_at`, `flow_run_id`. 부분 실패한 파티션을
   정상으로 오해하지 않기 위함임
 - `raw/` : 응답 원문. 파싱이 조용히 깨졌을 때 사이트를 다시 긁지 않고 파서만
