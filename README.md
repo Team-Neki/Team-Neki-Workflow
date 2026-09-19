@@ -96,7 +96,7 @@ S3를 거치므로 한 번에 끝나지 않고 스케줄을 나눠야 하는 트
 ```text
 s3://<bucket>/
   raw/     platform=LIFE_FOUR_CUT/dt=2026-08-02/page-001.html.gz
-  collect/ platform=LIFE_FOUR_CUT/dt=2026-08-02/stores.jsonl.gz
+  collect/ platform=LIFE_FOUR_CUT/dt=2026-08-02/stores.csv.gz
                                               /_manifest.json
   runs/    dt=2026-08-02/collect.json
 ```

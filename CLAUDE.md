@@ -206,6 +206,19 @@ base_url  board_code  referer  platform
 `collected_at`은 `CollectedStore`에 없습니다. 사이트가 준 값이 아니라 우리가 언제
 받았는지이므로 적재 시점에 `storage`가 붙입니다.
 
+적재 포맷은 헤더가 있는 CSV(+gzip)입니다. 다음 단계가 Postgres `COPY`로 그대로
+받고 사람이 볼 때도 스프레드시트로 열립니다. 열 순서는 `storage.COLUMNS`가
+정본이며, `CollectedStore`에 필드를 더하면 여기에도 넣어야 합니다. 빠뜨리면
+조용히 누락되지 않고 `DictWriter`가 `ValueError`로 막습니다.
+
+**CSV에는 타입도 null도 없습니다.** 빈 칸과 빈 문자열이 구분되지 않으므로
+수집 단계는 값이 없을 때 빈 문자열이 아니라 `None`을 넣어야 하고, 읽는 쪽인
+`read_stores`가 빈 칸을 `None`으로, 좌표를 `float`으로 되돌립니다. 이 규칙이
+깨지면 좌표가 문자열인 채로 enrich에 넘어갑니다.
+
+manifest는 CSV로 바꾸지 않습니다. `brands`처럼 중첩된 값을 담고 있어 표로
+펼칠 수 없습니다.
+
 ### 수집 스케줄은 한 곳에만 있습니다
 
 정기 수집 스케줄은 `deployments/stores_collect.py` 하나뿐입니다. 브랜드별
@@ -257,7 +270,7 @@ Prefect 3에서 동기 서브플로우 호출은 순차입니다. `ThreadPoolExe
 
 ```text
 raw/     platform=<브랜드>/dt=<날짜>/<이름>.gz
-collect/ platform=<브랜드>/dt=<날짜>/stores.jsonl.gz
+collect/ platform=<브랜드>/dt=<날짜>/stores.csv.gz
                                    /_manifest.json
 runs/    dt=<날짜>/collect.json
 ```
@@ -277,7 +290,8 @@ runs/    dt=<날짜>/collect.json
 - 같은 날 재실행은 같은 키를 덮어씀. 단일 객체 PUT은 원자적이라 멱등함
 - `_manifest.json`을 본문보다 **나중에** 올림. 순서가 뒤집히면 manifest만 있고
   데이터가 없는 창이 생김
-- `read_stores`가 manifest의 `count`와 실제 줄 수를 대조함. 다르면 예외임
+- `read_stores`가 manifest의 `count`와 실제 건수를 대조함. 다르면 예외임. 줄이
+  아니라 CSV 레코드를 셈. 주소에 줄바꿈이 섞이면 한 건이 여러 줄로 인용됨
 
 `boto3.Session().client("s3")`에 `endpoint_url`을 넘기지 않습니다. 로컬과 운영의
 차이는 환경변수뿐이어야 합니다. 로컬은 `AWS_PROFILE=neki-local`, 운영은 k8s Secret이
