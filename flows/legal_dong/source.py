@@ -68,6 +68,8 @@ def _parse_created_on(value: str) -> date | None:
         return None
 
 
+# 다른 수집원의 [2, 5, 10] 보다 길다. 공공데이터포털은 순간 장애보다 몇 분 단위로
+# 느려지거나 점검에 들어가는 쪽이라 짧은 간격으로 세 번 두드려도 같은 답을 받는다.
 @task(retries=3, retry_delay_seconds=[10, 30, 60])
 def fetch_rows() -> tuple[bytes, str]:
     """CSV 본문과 데이터셋 이름을 받는다.
@@ -82,8 +84,10 @@ def fetch_rows() -> tuple[bytes, str]:
         follow_redirects=True,
         headers={"User-Agent": USER_AGENT},
     ) as client:
-        # 세션 쿠키를 얻는다. 이것 없이 POST 하면 핸들이 오지 않는다.
-        client.get(DETAIL_URL)
+        # 세션 쿠키를 얻는다. 이것 없이 POST 하면 핸들이 오지 않는다. 여기서
+        # 5xx 를 받으면 뒤의 POST 가 "첨부파일 id 를 받지 못했습니다" 로 죽어
+        # 원인이 데이터셋 식별자 변경으로 오진되므로 먼저 걸러낸다.
+        client.get(DETAIL_URL).raise_for_status()
 
         handle = client.post(
             HANDLE_URL,

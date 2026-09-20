@@ -36,6 +36,13 @@ LEVEL_SGG = 2
 LEVEL_UMD = 3
 LEVEL_RI = 4
 
+# 시군구가 없는 시도로 판정되어야 하는 것. 현재 스냅샷에서는 세종 하나다.
+# 하드코딩을 피하는 원칙과 어긋나지만, 판정 자체가 "시군구 행이 하나뿐" 이라는
+# 현재 스냅샷의 휴리스틱이므로 기대값을 적어 두는 편이 정직하다. 개편으로 시군구가
+# 정말 하나뿐인 시도가 생기면 그 시군구명이 조용히 NULL 이 되는데, cron 실행에서는
+# info 로그를 봐야만 알 수 있어 여기서 벗어나면 warning 으로 올린다.
+EXPECTED_PHANTOM_SIDOS = frozenset({"세종특별자치시"})
+
 
 @dataclass(frozen=True)
 class LegalDong:
@@ -139,13 +146,14 @@ def normalize(rows: list[SourceDong]) -> list[LegalDong]:
     }
     if phantoms:
         logger.info("시군구가 없는 시도로 판정: %s", phantoms)
-    if len(phantoms) > 1:
-        # 전량에서 세종 하나만 걸렸다. 둘 이상이면 원문 구조가 바뀐 것이므로
-        # 판정을 다시 봐야 한다.
+    if set(phantoms) != EXPECTED_PHANTOM_SIDOS:
+        # 세종 외의 시도가 걸렸거나 세종이 빠졌다. 원문 구조가 바뀌었거나 개편으로
+        # 시군구가 하나뿐인 시도가 생긴 것이므로 판정을 다시 봐야 한다.
         logger.warning(
-            "시군구가 없는 시도가 %d개입니다. 원문 구조가 바뀌었을 수 "
-            "있으니 확인하세요.",
-            len(phantoms),
+            "시군구가 없는 시도 판정이 기대 %s 와 다릅니다: %s. 원문 구조가 "
+            "바뀌었거나 개편이 있었을 수 있으니 확인하세요.",
+            sorted(EXPECTED_PHANTOM_SIDOS),
+            sorted(phantoms),
         )
 
     dongs: list[LegalDong] = []

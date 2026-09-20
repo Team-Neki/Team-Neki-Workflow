@@ -28,10 +28,12 @@
 `collected_at` 컬럼을 두지 않는다. 20,561행에 같은 값을 반복하는 것이고, 스왑
 뒤에는 테이블 이름에서 날짜가 사라지므로 그 사실은 테이블 코멘트에 남긴다.
 
-**스왑에는 `lock_timeout` 이 필요하다.** 이름을 바꾸려면 ACCESS EXCLUSIVE 락이
-필요한데, 이 락을 기다리는 요청은 뒤이어 오는 읽기까지 자기 뒤에 줄 세운다.
-앱이 긴 조회를 물고 있으면 스왑이 기다리는 동안 앱 전체가 멈춘다. 그래서 몇 초
-안에 못 잡으면 실패하고 다음 실행에 맡긴다.
+**`lock_timeout` 이 필요하다.** 이름을 바꾸거나 테이블을 지우려면 ACCESS EXCLUSIVE
+락이 필요한데, 이 락을 기다리는 요청은 뒤이어 오는 읽기까지 자기 뒤에 줄 세운다.
+앱이 긴 조회를 물고 있으면 스왑이 기다리는 동안 앱 전체가 멈추고, 운영자가 psql 로
+`_prev` 를 열어 두었으면 첫머리의 DROP 이 무기한 기다린다. 그래서 트랜잭션 첫
+문장으로 걸어 몇 초 안에 못 잡으면 실패하고 다음 실행에 맡긴다. 그 사이의 COPY 와
+인덱스 생성은 새로 만든 staging 만 만지므로 타임아웃에 걸릴 일이 없다.
 """
 
 from datetime import date, datetime, timedelta, timezone
@@ -49,8 +51,8 @@ PREV_TABLE = f"{TABLE}_prev"
 # 파티션 날짜와 같은 규칙이다.
 KST = timezone(timedelta(hours=9))
 
-# 스왑이 락을 못 잡을 때 물러나는 시간. 길게 잡으면 그만큼 앱의 읽기가 우리 뒤에
-# 줄 서므로 짧아야 한다.
+# DROP 과 스왑이 락을 못 잡을 때 물러나는 시간. 길게 잡으면 그만큼 앱의 읽기가
+# 우리 뒤에 줄 서므로 짧아야 한다.
 LOCK_TIMEOUT = "5s"
 
 # DDL 의 컬럼 순서와 같아야 한다. COPY 가 여기 순서로 값을 받으므로 한쪽만 고치면
@@ -168,8 +170,13 @@ def swap_table(dongs: list[LegalDong], *, dataset: str = "") -> dict[str, int]:
 
     with connect() as connection:
         with connection.cursor() as cursor:
-            # 지난 실행이 스왑 전에 죽었으면 이 이름이 남아 있다. 같은 날 다시
-            # 돌릴 수 있어야 하므로 먼저 치운다.
+            # 트랜잭션 첫 문장이어야 한다. 아래 DROP 도 ACCESS EXCLUSIVE 락을 잡으므로
+            # 스왑 직전에 걸면 DROP 이 보호 밖에 남는다.
+            cursor.execute(f"SET LOCAL lock_timeout = '{LOCK_TIMEOUT}'")
+
+            # 전 과정이 한 트랜잭션이라 지난 실행이 어디서 죽었든 staging 은 롤백되어
+            # 남지 않는다. 누가 손으로 만들어 두었거나 이 코드가 트랜잭션을 나누게
+            # 바뀌었을 때를 대비한 방어다.
             cursor.execute(f"DROP TABLE IF EXISTS {staging}")
 
             # 이전 세대도 여기서 치운다. 스왑 직전에 치우면 같은 날 재실행할 때
@@ -230,9 +237,8 @@ def swap_table(dongs: list[LegalDong], *, dataset: str = "") -> dict[str, int]:
                 cursor.execute(f"SELECT count(*) FROM {TABLE}")
                 before = cursor.fetchone()[0]
 
-            # 여기서부터가 스왑이다. 락을 못 잡으면 앱을 세우지 않고 물러난다.
-            cursor.execute(f"SET LOCAL lock_timeout = '{LOCK_TIMEOUT}'")
-
+            # 여기서부터가 스왑이다. 첫머리의 lock_timeout 이 그대로 살아 있어
+            # 락을 못 잡으면 앱을 세우지 않고 물러난다.
             cursor.execute(f"ALTER TABLE IF EXISTS {TABLE} RENAME TO {PREV_TABLE}")
             cursor.execute(f"ALTER TABLE {staging} RENAME TO {TABLE}")
 
