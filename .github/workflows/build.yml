@@ -42,6 +42,23 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
+      # 없는 ref 를 적으면 checkout 이 fetch 에서 "exit code 1" 로만 끝나 원인이 안 보인다.
+      # 먼저 브랜치/태그/sha 중 하나로 풀리는지 확인하고 아니면 이름을 말해준다.
+      - name: Check ref exists
+        if: inputs.ref != ''
+        env:
+          REF: ${{ inputs.ref }}
+          REPO_URL: ${{ github.server_url }}/${{ github.repository }}
+        run: |
+          if git ls-remote --exit-code --heads --tags "$REPO_URL" "$REF" >/dev/null 2>&1; then
+            exit 0
+          fi
+          if printf '%s' "$REF" | grep -Eq '^[0-9a-f]{7,40}$'; then
+            exit 0
+          fi
+          echo "::error::ref '$REF' 가 브랜치도 태그도 아니다. 브랜치명을 그대로 적는다 (예: feature/BACKEND-103-flow-postgres). 비우면 '${GITHUB_REF_NAME}' 를 배포한다."
+          exit 1
+
       # push 나 ref 를 비운 dispatch 면 이 워크플로가 실행된 브랜치(github.ref) 로 간다.
       - uses: actions/checkout@v5
         with:
