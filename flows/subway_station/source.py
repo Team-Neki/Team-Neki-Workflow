@@ -69,6 +69,8 @@ def _filename(disposition: str) -> str:
         return name
 
 
+# 다른 수집원의 [2, 5, 10] 보다 길다. 공공 포털은 순간 장애보다 몇 분 단위로 느려지거나
+# 점검에 들어가는 쪽이라 짧은 간격으로 세 번 두드려도 같은 답을 받는다. 법정동과 같다.
 @task(retries=3, retry_delay_seconds=[10, 30, 60])
 def fetch_rows() -> tuple[bytes, str]:
     """xlsx 본문과 파일 이름을 받는다. 이름에 기준일자가 들어 있다."""

@@ -18,8 +18,11 @@
 **인덱스 이름은 되돌리지 않는다.** 테이블 이름을 바꿔도 인덱스 이름은 따라오지
 않으므로, 표준 이름으로 맞추려 들면 세대마다 `_prev` 쪽과 부딪힌다.
 
-**스왑에 `lock_timeout` 이 필요하다.** ACCESS EXCLUSIVE 를 기다리는 요청은 뒤이어
-오는 읽기까지 자기 뒤에 줄 세운다. 못 잡으면 물러나고 다음 실행에 맡긴다.
+**`lock_timeout` 이 필요하다.** 이름 변경과 DROP 이 잡는 ACCESS EXCLUSIVE 를 기다리는
+요청은 뒤이어 오는 읽기까지 자기 뒤에 줄 세우고, 운영자가 psql 로 `_prev` 를 열어
+두었으면 첫머리의 DROP 이 무기한 기다린다. 트랜잭션 첫 문장으로 걸어 못 잡으면
+물러나고 다음 실행에 맡긴다. 그 사이의 COPY 와 인덱스 생성은 새 staging 만 만지므로
+타임아웃에 걸릴 일이 없다.
 """
 
 from datetime import date, datetime, timedelta, timezone
@@ -36,6 +39,7 @@ PREV_TABLE = f"{TABLE}_prev"
 # KST 로 끊는다. UTC 로 끊으면 새벽 실행이 전날 이름을 갖는다.
 KST = timezone(timedelta(hours=9))
 
+# DROP 과 스왑이 락을 못 잡을 때 물러나는 시간. 길면 그만큼 앱의 읽기가 뒤에 줄 선다.
 LOCK_TIMEOUT = "5s"
 
 # DDL 의 컬럼 순서와 같아야 한다. COPY 가 여기 순서로 값을 받는다.
@@ -108,6 +112,12 @@ def swap_table(stations: list[Station], *, dataset: str = "") -> dict[str, int]:
 
     with connect() as connection:
         with connection.cursor() as cursor:
+            # 트랜잭션 첫 문장이어야 한다. 아래 DROP 도 ACCESS EXCLUSIVE 락을 잡으므로
+            # 스왑 직전에 걸면 DROP 이 보호 밖에 남는다.
+            cursor.execute(f"SET LOCAL lock_timeout = '{LOCK_TIMEOUT}'")
+
+            # 한 트랜잭션이라 지난 실행의 staging 은 롤백되어 남지 않는다. 손으로 만든
+            # 테이블이나 향후 트랜잭션 분리에 대비한 방어다.
             cursor.execute(f"DROP TABLE IF EXISTS {staging}")
 
             # 이전 세대를 스왑 직전이 아니라 여기서 치운다. 나중에 치우면 같은 날
@@ -157,7 +167,7 @@ def swap_table(stations: list[Station], *, dataset: str = "") -> dict[str, int]:
                 cursor.execute(f"SELECT count(*) FROM {TABLE}")
                 before = cursor.fetchone()[0]
 
-            cursor.execute(f"SET LOCAL lock_timeout = '{LOCK_TIMEOUT}'")
+            # 여기서부터가 스왑이다. 첫머리의 lock_timeout 이 그대로 살아 있다.
             cursor.execute(f"ALTER TABLE IF EXISTS {TABLE} RENAME TO {PREV_TABLE}")
             cursor.execute(f"ALTER TABLE {staging} RENAME TO {TABLE}")
 
