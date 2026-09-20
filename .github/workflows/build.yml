@@ -42,7 +42,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      # push 면 inputs 가 비어 있어 github.ref(main) 로 간다.
+      # push 나 ref 를 비운 dispatch 면 이 워크플로가 실행된 브랜치(github.ref) 로 간다.
       - uses: actions/checkout@v5
         with:
           ref: ${{ inputs.ref || github.ref }}
@@ -68,7 +68,9 @@ jobs:
         run: |
           version=$(sed -n 's/^version = "\(.*\)"/\1/p' pyproject.toml)
           sha=$(git rev-parse --short=7 HEAD)
-          ref="${INPUT_REF:-main}"
+          # ref 입력이 비면 이 워크플로가 실행된 브랜치(GITHUB_REF_NAME)다. push 면 main 이고,
+          # "Use workflow from" 을 다른 브랜치로 골라 실행했으면 그 브랜치다.
+          ref="${INPUT_REF:-$GITHUB_REF_NAME}"
           ref="${ref#refs/heads/}"
           echo "tag=${version}-${sha}" >> "$GITHUB_OUTPUT"
           echo "ref=${ref}" >> "$GITHUB_OUTPUT"

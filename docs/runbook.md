@@ -159,15 +159,22 @@ git commit -am "chore(prefect): rollback image to 0.1.0-a1b2c3d" && git push
 ### 브랜치를 머지 전에 올려 보기
 
 PR 을 머지하기 전에 그 브랜치 코드로 flow 를 실제 클러스터에서 한 번 돌려 보고 싶을 때
-씁니다. Actions 탭 > build > Run workflow 에서 **Use workflow from 은 main 으로 두고**
-`ref` 에 브랜치명을 적습니다. 실행되는 build.yml 은 main 의 것이므로 그 브랜치에
-build.yml 이 없어도 됩니다.
+씁니다. Actions 탭 > build > Run workflow 에서 두 방법 중 하나를 씁니다.
 
 ```text
+# 1) main 의 build.yml 로 다른 브랜치를 빌드. 그 브랜치에 build.yml 이 없어도 된다
 Run workflow
   Use workflow from : main
   ref               : feature/BACKEND-103-flow-postgres
+
+# 2) 그 브랜치의 build.yml 로 그 브랜치를 빌드. ref 는 비워 둔다
+Run workflow
+  Use workflow from : feature/BACKEND-103-flow-postgres
+  ref               : (비움)
 ```
+
+`ref` 입력은 선택한 "Use workflow from" 브랜치의 build.yml 에 있어야 화면에 나옵니다.
+main 에 아직 없다면 2) 로 갑니다.
 
 일어나는 일은 main merge 와 같습니다. 이미지가 `<그 브랜치 pyproject version>-<sha7>` 로
 올라가고, GitOps `worker.yaml` 의 태그가 바뀌어 worker 가 롤링되고, initContainer 가
