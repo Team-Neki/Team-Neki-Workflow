@@ -8,12 +8,15 @@ worker의 IAM role이 실제 S3를 가리킨다. 이관은 프로파일 교체�
 레이아웃은 다음과 같다.
 
     raw/     platform=<브랜드>/dt=<날짜>/<이름>.gz
-    collect/ platform=<브랜드>/dt=<날짜>/stores.csv.gz
+    collect/ platform=<브랜드>/dt=<날짜>/stores.csv
                                        /_manifest.json
 
-`dt=` Hive 파티션이라 이후 Glue나 Athena를 그대로 붙일 수 있다. 포맷은
-CSV+gzip이다. 다음 단계가 Postgres COPY로 그대로 받고, 사람이 볼 때도
-스프레드시트로 바로 열린다. 스키마가 아직 흔들리고 있어 Parquet은 이르다.
+`dt=` Hive 파티션이라 이후 Glue나 Athena를 그대로 붙일 수 있다. 포맷은 헤더
+있는 CSV다. 다음 단계가 Postgres COPY로 그대로 받고, 사람이 볼 때도 S3 콘솔과
+스프레드시트에서 바로 열린다. 스키마가 아직 흔들리고 있어 Parquet은 이르다.
+
+collect는 압축하지 않는다. 하루 전량이 수백 KB라 줄여서 얻는 것이 없고,
+압축하면 바로 열린다는 이점이 사라진다. raw/는 HTML 원문이라 gzip으로 둔다.
 
 CSV는 타입이 없어 읽는 쪽이 되돌려야 한다. 열 목록이 곧 계약이므로 `COLUMNS`가
 정본이고, 여기 없는 필드를 적재하면 `DictWriter`가 막는다. manifest는 중첩
@@ -45,7 +48,7 @@ COLLECT_PREFIX = "collect"
 # 깨진다.
 RUNS_PREFIX = "runs"
 
-STORES_NAME = "stores.csv.gz"
+STORES_NAME = "stores.csv"
 MANIFEST_NAME = "_manifest.json"
 RUN_MANIFEST_NAME = "collect.json"
 
@@ -141,7 +144,7 @@ def put_stores(
     for store in stores:
         writer.writerow(_record(store, collected_at=collected_at))
 
-    body = gzip.compress(buffer.getvalue().encode("utf-8"))
+    body = buffer.getvalue().encode("utf-8")
 
     client.put_object(Bucket=bucket, Key=f"{base}/{STORES_NAME}", Body=body)
 
@@ -299,7 +302,7 @@ def read_stores(*, platform: Platform, dt: date) -> list[dict[str, Any]]:
     base = partition(COLLECT_PREFIX, platform=platform, dt=dt)
 
     body = client.get_object(Bucket=bucket, Key=f"{base}/{STORES_NAME}")["Body"].read()
-    text = gzip.decompress(body).decode("utf-8")
+    text = body.decode("utf-8")
     records = [_restore(row) for row in csv.DictReader(io.StringIO(text))]
 
     manifest = json.loads(

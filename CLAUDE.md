@@ -209,10 +209,14 @@ base_url  board_code  referer  platform
 `collected_at`은 `CollectedStore`에 없습니다. 사이트가 준 값이 아니라 우리가 언제
 받았는지이므로 적재 시점에 `storage`가 붙입니다.
 
-적재 포맷은 헤더가 있는 CSV(+gzip)입니다. 다음 단계가 Postgres `COPY`로 그대로
-받고 사람이 볼 때도 스프레드시트로 열립니다. 열 순서는 `storage.COLUMNS`가
-정본이며, `CollectedStore`에 필드를 더하면 여기에도 넣어야 합니다. 빠뜨리면
-조용히 누락되지 않고 `DictWriter`가 `ValueError`로 막습니다.
+적재 포맷은 헤더가 있는 CSV입니다. 다음 단계가 Postgres `COPY`로 그대로 받고
+사람이 볼 때도 S3 콘솔과 스프레드시트에서 바로 열립니다. 열 순서는
+`storage.COLUMNS`가 정본이며, `CollectedStore`에 필드를 더하면 여기에도 넣어야
+합니다. 빠뜨리면 조용히 누락되지 않고 `DictWriter`가 `ValueError`로 막습니다.
+
+**collect는 압축하지 않습니다.** 하루 전량이 수백 KB라 gzip으로 줄여서 얻는 것이
+없고, 압축하면 바로 열린다는 이점이 사라집니다. `raw/`는 HTML 원문이라 크기가
+있어 gzip으로 둡니다.
 
 **CSV에는 타입도 null도 없습니다.** 빈 칸과 빈 문자열이 구분되지 않으므로
 수집 단계는 값이 없을 때 빈 문자열이 아니라 `None`을 넣어야 하고, 읽는 쪽인
@@ -273,7 +277,7 @@ Prefect 3에서 동기 서브플로우 호출은 순차입니다. `ThreadPoolExe
 
 ```text
 raw/     platform=<브랜드>/dt=<날짜>/<이름>.gz
-collect/ platform=<브랜드>/dt=<날짜>/stores.csv.gz
+collect/ platform=<브랜드>/dt=<날짜>/stores.csv
                                    /_manifest.json
 runs/    dt=<날짜>/collect.json
 ```
