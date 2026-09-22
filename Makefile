@@ -24,8 +24,8 @@ PREFECT_ENV = PREFECT_API_URL=$(API_URL)
 .DEFAULT_GOAL := help
 .PHONY: help setup check hello lifefourcuts photoism dontlxxkup photosignature \
 	photogray planbstudio picdot monomansion harufilm photolabplus broomstudio \
-	collect legal-dong localstack localstack-down s3-init s3-ls serve server \
-	deploy build image clean
+	collect legal-dong subway-station localstack localstack-down s3-init s3-ls \
+	serve server deploy build image clean
 
 help: ## 명령 목록을 출력한다
 	@echo "사용법: make <명령>"
@@ -121,6 +121,12 @@ collect: ## 전체 브랜드를 병렬로 수집한다 (KAKAO_API_KEY, S3 필요
 	results = stores_collect(); \
 	print('성공', sum(1 for r in results.values() if r['status'] == 'ok'), '건'); \
 	print('합계', sum(r.get('count', 0) for r in results.values()), '건')"
+
+subway-station: ## 지하철 역 정보를 수집해 Postgres 에 적재한다 (DATABASE_URL 필요)
+	@$(UV) run python -c "\
+	from flows.subway_station import subway_station; \
+	stations = subway_station(); \
+	print('수집', len(stations), '건')"
 
 legal-dong: ## 법정동 코드를 수집해 Postgres 에 적재한다 (DATABASE_URL 필요)
 	@$(UV) run python -c "\
