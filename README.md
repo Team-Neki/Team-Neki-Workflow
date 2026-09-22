@@ -401,10 +401,16 @@ worker와 flow run(Job 파드)이 같은 이미지를 씁니다. 이미지에 `W
 참조가 구워져 있어 `deploy.py`가 그 값을 각 deployment의 `job_variables.image`에
 넣습니다. 태그의 version은 `pyproject.toml`에서 읽습니다.
 
-자격증명(`KAKAO_API_KEY`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`,
-`AWS_DEFAULT_REGION`, `S3_BUCKET`)은 k8s Secret이 파드 환경변수로 넣습니다. IAM role은
-없고 코드는 환경변수만 봅니다. 매니페스트와 RBAC은 GitOps 레포 `overlays/prefect/`에
-있습니다.
+자격증명(`KAKAO_API_KEY`, `DATABASE_URL` 등)은 GitOps 레포의 k8s Secret
+`prefect-workflow`가 flow run Job 파드 환경변수로 넣습니다. worker 파드가 아니라 Job
+파드입니다. flow 코드는 Job 안에서 돌기 때문에 worker에 env를 넣어도 flow에는
+전달되지 않습니다. IAM role은 없고 코드는 환경변수만 봅니다. 매니페스트와 RBAC은
+GitOps 레포 `overlays/prefect/`에 있습니다.
+
+`DATABASE_URL`은 `legal-dong`, `subway-station`이 앱 DB(Team-Neki-Server의
+PostgreSQL)에 적재할 때 씁니다. Prefect 메타DB가 아닙니다. 없으면 flow가 시작 직후
+`RuntimeError`로 실패합니다. 새 flow가 환경변수를 추가로 읽으면 GitOps의
+`workflow-secret.example.yaml`에 키를 같이 추가합니다.
 
 ### Actions 준비
 
