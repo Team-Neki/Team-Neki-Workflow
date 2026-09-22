@@ -5,6 +5,11 @@
 #
 #   merge -> 이미지 빌드/푸시 -> GitOps worker.yaml image 태그 커밋 -> ArgoCD 가 worker 롤링
 #         -> initContainer 가 deploy.py 실행 -> 다음 run 부터 새 코드
+#
+# 브랜치를 머지 전에 클러스터에 올려 보려면 Actions > build > Run workflow 에서
+# ref 에 브랜치명을 적는다. 이 파일은 main 의 것이 실행되므로 그 브랜치에 build.yml 이
+# 없어도 된다. Prefect 환경은 하나라 worker 가 그 브랜치 이미지로 바뀌고, :main 태그는
+# 옮기지 않는다. 되돌리려면 ref 를 비우고 다시 실행한다. 절차는 docs/runbook.md.
 name: build
 
 on:
@@ -13,6 +18,11 @@ on:
     paths-ignore:
       - "**.md"
   workflow_dispatch:
+    inputs:
+      ref:
+        description: "빌드해 배포할 브랜치/태그/sha. 비우면 main"
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -32,7 +42,27 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
+      # 없는 ref 를 적으면 checkout 이 fetch 에서 "exit code 1" 로만 끝나 원인이 안 보인다.
+      # 먼저 브랜치/태그/sha 중 하나로 풀리는지 확인하고 아니면 이름을 말해준다.
+      - name: Check ref exists
+        if: inputs.ref != ''
+        env:
+          REF: ${{ inputs.ref }}
+          REPO_URL: ${{ github.server_url }}/${{ github.repository }}
+        run: |
+          if git ls-remote --exit-code --heads --tags "$REPO_URL" "$REF" >/dev/null 2>&1; then
+            exit 0
+          fi
+          if printf '%s' "$REF" | grep -Eq '^[0-9a-f]{7,40}$'; then
+            exit 0
+          fi
+          echo "::error::ref '$REF' 가 브랜치도 태그도 아니다. 브랜치명을 그대로 적는다 (예: feature/BACKEND-103-flow-postgres). 비우면 '${GITHUB_REF_NAME}' 를 배포한다."
+          exit 1
+
+      # push 나 ref 를 비운 dispatch 면 이 워크플로가 실행된 브랜치(github.ref) 로 간다.
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.ref || github.ref }}
 
       # 조직 secret 이 이 저장소에 열려 있지 않으면 아래 GitOps checkout 이
       # "Input required and not supplied: token" 으로만 끝나 원인이 드러나지 않는다.
@@ -46,12 +76,27 @@ jobs:
             exit 1
           }
 
-      # 태그는 <pyproject version>-<sha7>. main 태그도 같이 올려 최신을 가리킨다.
+      # 태그는 <pyproject version>-<sha7>. sha 는 GITHUB_SHA 가 아니라 체크아웃된 커밋에서
+      # 읽는다. ref 로 다른 브랜치를 받았을 때 GITHUB_SHA 는 main 을 가리킨다.
       - name: Resolve image tag
         id: tag
+        env:
+          INPUT_REF: ${{ inputs.ref }}
         run: |
           version=$(sed -n 's/^version = "\(.*\)"/\1/p' pyproject.toml)
-          echo "tag=${version}-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+          sha=$(git rev-parse --short=7 HEAD)
+          # ref 입력이 비면 이 워크플로가 실행된 브랜치(GITHUB_REF_NAME)다. push 면 main 이고,
+          # "Use workflow from" 을 다른 브랜치로 골라 실행했으면 그 브랜치다.
+          ref="${INPUT_REF:-$GITHUB_REF_NAME}"
+          ref="${ref#refs/heads/}"
+          echo "tag=${version}-${sha}" >> "$GITHUB_OUTPUT"
+          echo "ref=${ref}" >> "$GITHUB_OUTPUT"
+          if [ "$ref" = "main" ]; then
+            echo "main=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "main=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::main 이 아닌 '$ref' 를 배포한다. :main 태그는 옮기지 않는다. 되돌리려면 ref 를 비우고 다시 실행."
+          fi
 
       - name: Log in to GHCR
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
@@ -61,8 +106,16 @@ jobs:
         env:
           TAG: ${{ steps.tag.outputs.tag }}
         run: |
-          docker build --build-arg IMAGE_REF="$IMAGE:$TAG" -t "$IMAGE:$TAG" -t "$IMAGE:main" .
+          docker build --build-arg IMAGE_REF="$IMAGE:$TAG" -t "$IMAGE:$TAG" .
           docker push "$IMAGE:$TAG"
+
+      # :main 은 "main 이 가리키는 이미지" 를 뜻하므로 main 빌드에서만 옮긴다.
+      - name: Push main tag
+        if: steps.tag.outputs.main == 'true'
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          docker tag "$IMAGE:$TAG" "$IMAGE:main"
           docker push "$IMAGE:main"
 
       # GITOPS_PAT: Team-Neki 조직 secret. GitOps 레포에 contents:write 권한이 있는 PAT 로
@@ -77,6 +130,8 @@ jobs:
         working-directory: gitops
         env:
           TAG: ${{ steps.tag.outputs.tag }}
+          REF: ${{ steps.tag.outputs.ref }}
+          IS_MAIN: ${{ steps.tag.outputs.main }}
         run: |
           # admin-web 과 같은 방식. worker.yaml 은 register-deployments initContainer 와
           # prefect-worker 컨테이너 두 곳에서 이 이미지를 참조하므로 둘을 같은 태그로 바꿔야 한다.
@@ -100,7 +155,10 @@ jobs:
           fi
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git commit -am "chore(prefect): update image to $TAG"
+          msg="chore(prefect): update image to $TAG"
+          # 브랜치 배포는 GitOps 이력에서 구분되게 남긴다. 다음 main merge 가 덮는다.
+          [ "$IS_MAIN" = "true" ] || msg="$msg (from $REF, 머지 전 테스트 배포)"
+          git commit -am "$msg"
           # 다른 레포의 CI 도 같은 GitOps 레포에 커밋하므로 push 직전에 rebase 한다.
           for i in 1 2 3; do
             git pull --rebase && git push && exit 0

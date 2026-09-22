@@ -111,7 +111,7 @@ docker pull ghcr.io/team-neki/team-neki-workflow:main
 - `worker.yaml`의 register-deployments initContainer와 prefect-worker 컨테이너가 `image: ghcr.io/team-neki/team-neki-workflow:<태그>`를 씀 : build.yml이 이 `image:` 줄들을 같은 태그로 바꿈 (admin-web과 같은 방식)
 - 위 initContainer가 `/opt/prefect`에서 `python deploy.py`를 실행함
 - initContainer env : `PREFECT_API_URL`, `PREFECT_WORK_POOL=neki-pool`
-- work pool `neki-pool`의 base job template env : `KAKAO_API_KEY` (k8s Secret 참조)
+- k8s Secret `prefect-workflow` (`workflow-secret.yaml`, gitignore) : `KAKAO_API_KEY`, `DATABASE_URL`. `worker-base-job-template.json`의 `envFrom`이 이 Secret을 flow run Job 파드에 넣음. **worker.yaml에 env를 넣어도 flow에는 전달되지 않음**. Secret이 없으면 모든 flow run이 `CreateContainerConfigError`로 뜨지 않음
 
 ## merge할 때 확인하는 것
 
@@ -156,6 +156,42 @@ grep -n 'image: ghcr.io/team-neki/team-neki-workflow:' overlays/prefect/worker.y
 git commit -am "chore(prefect): rollback image to 0.1.0-a1b2c3d" && git push
 ```
 
+### 브랜치를 머지 전에 올려 보기
+
+PR 을 머지하기 전에 그 브랜치 코드로 flow 를 실제 클러스터에서 한 번 돌려 보고 싶을 때
+씁니다. Actions 탭 > build > Run workflow 에서 두 방법 중 하나를 씁니다.
+
+```text
+# 1) main 의 build.yml 로 다른 브랜치를 빌드. 그 브랜치에 build.yml 이 없어도 된다
+Run workflow
+  Use workflow from : main
+  ref               : feature/BACKEND-103-flow-postgres
+
+# 2) 그 브랜치의 build.yml 로 그 브랜치를 빌드. ref 는 비워 둔다
+Run workflow
+  Use workflow from : feature/BACKEND-103-flow-postgres
+  ref               : (비움)
+```
+
+`ref` 입력은 선택한 "Use workflow from" 브랜치의 build.yml 에 있어야 화면에 나옵니다.
+main 에 아직 없다면 2) 로 갑니다.
+
+일어나는 일은 main merge 와 같습니다. 이미지가 `<그 브랜치 pyproject version>-<sha7>` 로
+올라가고, GitOps `worker.yaml` 의 태그가 바뀌어 worker 가 롤링되고, initContainer 가
+그 브랜치의 `deployments/` 를 등록합니다. 다른 점은 둘입니다.
+
+- `:main` 태그는 옮기지 않습니다. `:main` 은 main 이 가리키는 이미지라는 뜻을 유지합니다
+- GitOps 커밋 메시지에 `(from <브랜치>, 머지 전 테스트 배포)` 가 붙어 이력에서 구분됩니다
+
+**Prefect 환경은 하나입니다.** 브랜치를 올리면 그 시간 동안 운영 worker 가 그 브랜치
+코드로 돕니다. main 에만 있는 deployment 는 서버에 남아 있지만 job image 는 이전 태그를
+유지하므로, 브랜치가 main 보다 뒤처져 있으면 그 사이 main 의 수정은 반영되지 않습니다.
+확인이 끝나면 `ref` 를 비우고 다시 실행해 main 으로 되돌립니다. 다음 main merge 가
+있어도 되돌아갑니다.
+
+`ci.yml` 은 `pull_request` 에만 돌므로 이 경로로는 `make check` 가 실행되지 않습니다.
+PR 의 ci 가 초록인 브랜치만 올리세요.
+
 ### 클러스터 밖에서 직접 등록하기
 
 initContainer를 기다리지 않고 지금 등록을 갱신하려면 터널을 열고 `make deploy`를 씁니다.
@@ -182,6 +218,9 @@ Prefect UI에서 deployment를 pause합니다. `deploy.py`가 배포 전 상태�
 | worker 파드 `ImagePullBackOff` | 패키지가 private이거나 태그가 없음 | 패키지를 public으로. 태그는 Actions 로그와 대조 |
 | initContainer가 `work pool이 지정되지 않았습니다`로 종료 | `PREFECT_WORK_POOL` env 누락 | GitOps worker 매니페스트 |
 | flow run 파드에서 `ModuleNotFoundError: flows` | deployment에 `image`가 없어 기본 prefect 이미지로 뜸 | initContainer 로그에 `이미지:` 줄이 있는지 확인. 없으면 `WORKFLOW_IMAGE`가 구워지지 않은 이미지 |
+| flow run Job 파드가 `CreateContainerConfigError` | GitOps `prefect-workflow` Secret이 클러스터에 없음 | `kubectl -n prefect get secret prefect-workflow`. 없으면 `workflow-secret.yaml` apply |
+| `legal-dong`, `subway-station`이 `DATABASE_URL 환경변수가 없습니다`로 실패 | Secret에 `DATABASE_URL` 키가 비어 있음 | Secret 값 채우고 다시 apply. 다음 run부터 반영 |
+| `DATABASE_URL`은 있는데 `connection refused` | HOST를 `localhost`로 적음. 파드 안의 localhost는 파드 자신 | 노드 IP 또는 클러스터 Service 주소로 |
 | worker가 `prefect_kubernetes` import 실패로 못 뜸 | `pyproject.toml`의 prefect 버전이 Dockerfile 베이스와 다름 | 둘을 맞추고 `make image`로 확인 (assert가 잡음) |
 | 꺼둔 스케줄이 되살아남 | `deploy.py`를 거치지 않고 `prefect deploy` 등을 직접 호출함 | 등록은 `deploy.py`로만 |
 
