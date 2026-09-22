@@ -96,7 +96,7 @@ S3를 거치므로 한 번에 끝나지 않고 스케줄을 나눠야 하는 트
 ```text
 s3://<bucket>/
   raw/     platform=LIFE_FOUR_CUT/dt=2026-08-02/page-001.html.gz
-  collect/ platform=LIFE_FOUR_CUT/dt=2026-08-02/stores.csv
+  collect/ platform=LIFE_FOUR_CUT/dt=2026-08-02/030412.csv
                                               /_manifest.json
   runs/    dt=2026-08-02/collect.json
 ```
@@ -105,8 +105,8 @@ s3://<bucket>/
 - 포맷 : 헤더 있는 CSV. 압축하지 않아 S3 콘솔과 스프레드시트에서 바로 열리고,
   다음 단계가 Postgres `COPY`로 그대로 받음. 스키마가 아직 흔들려 Parquet은 이른
   단계임
-- `_manifest.json` : `count`, `collected_at`, `flow_run_id`. 부분 실패한 파티션을
-  정상으로 오해하지 않기 위함임
+- `_manifest.json` : `file`, `count`, `collected_at`, `flow_run_id`. 부분 실패한
+  파티션을 정상으로 오해하지 않기 위함이고, `file`이 현재 CSV를 가리킴
 - `raw/` : 응답 원문. 파싱이 조용히 깨졌을 때 사이트를 다시 긁지 않고 파서만
   고쳐 재생성하기 위함임. 보존은 S3 lifecycle에 맡김
 
@@ -133,8 +133,10 @@ s3://<bucket>/
 `collect/` 안에 두지 않은 이유가 있습니다. 그쪽은 Hive 파티션만 있어야 나중에
 Glue를 그대로 붙일 수 있고, 다른 것이 섞이면 파티션 인식이 깨집니다.
 
-같은 날 다시 실행하면 같은 키를 덮어씁니다. 단일 객체 PUT은 원자적이라 안전하고,
-이렇게 해야 재실행이 멱등해집니다.
+CSV 파일명은 적재 시각(KST)입니다. 같은 날 다시 실행하면 파일이 하나 더 생기고
+이전 것은 남습니다. `_manifest.json`만 덮어쓰며 `file`로 현재 CSV를 가리키므로,
+읽는 쪽은 manifest만 따라가면 됩니다. manifest 교체는 단일 객체 PUT이라
+원자적입니다.
 
 파티션 날짜는 KST 기준입니다. 새벽 3시 실행을 UTC로 끊으면 전날 파티션에 들어가
 운영자가 보는 날짜와 어긋나기 때문입니다.

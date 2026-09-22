@@ -8,7 +8,7 @@ worker의 IAM role이 실제 S3를 가리킨다. 이관은 프로파일 교체�
 레이아웃은 다음과 같다.
 
     raw/     platform=<브랜드>/dt=<날짜>/<이름>.gz
-    collect/ platform=<브랜드>/dt=<날짜>/stores.csv
+    collect/ platform=<브랜드>/dt=<날짜>/<HHMMSS>.csv
                                        /_manifest.json
 
 `dt=` Hive 파티션이라 이후 Glue나 Athena를 그대로 붙일 수 있다. 포맷은 헤더
@@ -17,6 +17,10 @@ worker의 IAM role이 실제 S3를 가리킨다. 이관은 프로파일 교체�
 
 collect는 압축하지 않는다. 하루 전량이 수백 KB라 줄여서 얻는 것이 없고,
 압축하면 바로 열린다는 이점이 사라진다. raw/는 HTML 원문이라 gzip으로 둔다.
+
+CSV 파일명은 적재 시각(KST)이다. 같은 날 다시 돌리면 파일이 하나 더 생기고
+이전 것은 남는다. 파티션의 `_manifest.json`은 하나뿐이며 가장 최근 실행이
+덮어쓰고 `file`로 어느 CSV가 현재인지 가리킨다. 읽는 쪽은 manifest만 따라간다.
 
 CSV는 타입이 없어 읽는 쪽이 되돌려야 한다. 열 목록이 곧 계약이므로 `COLUMNS`가
 정본이고, 여기 없는 필드를 적재하면 `DictWriter`가 막는다. manifest는 중첩
@@ -48,7 +52,7 @@ COLLECT_PREFIX = "collect"
 # 깨진다.
 RUNS_PREFIX = "runs"
 
-STORES_NAME = "stores.csv"
+STORES_NAME_FORMAT = "%H%M%S.csv"
 MANIFEST_NAME = "_manifest.json"
 RUN_MANIFEST_NAME = "collect.json"
 
@@ -120,8 +124,9 @@ def put_stores(
 ) -> str:
     """수집 결과를 collect 파티션에 적재하고 manifest를 남긴다.
 
-    같은 날 다시 실행하면 같은 키를 덮어쓴다. 단일 객체 PUT은 원자적이라
-    안전하고, 이렇게 해야 재실행이 멱등해진다.
+    파일명이 적재 시각이라 같은 날 다시 실행해도 이전 CSV를 덮어쓰지 않는다.
+    manifest만 덮어쓰며 단일 객체 PUT이라 원자적이다. 읽는 쪽은 manifest의
+    `file`을 따라가므로 언제 읽어도 완결된 실행 하나를 본다.
 
     manifest가 없으면 다음 단계가 부분 실패한 파티션을 정상으로 오해한다.
     그래서 본문을 먼저 올리고 manifest를 나중에 올린다. 순서가 뒤집히면
@@ -145,12 +150,16 @@ def put_stores(
         writer.writerow(_record(store, collected_at=collected_at))
 
     body = buffer.getvalue().encode("utf-8")
+    name = collected_at.strftime(STORES_NAME_FORMAT)
 
-    client.put_object(Bucket=bucket, Key=f"{base}/{STORES_NAME}", Body=body)
+    client.put_object(Bucket=bucket, Key=f"{base}/{name}", Body=body)
 
     manifest = {
         "platform": str(platform),
         "dt": f"{dt:%Y-%m-%d}",
+        # 이 파티션에서 현재로 삼는 CSV. 같은 날 여러 번 돌리면 파일이 여럿이라
+        # 이 필드가 없으면 읽는 쪽이 어느 것을 볼지 정할 수 없다.
+        "file": name,
         "count": len(stores),
         "collected_at": collected_at.isoformat(),
         # task 안에서도 부모 flow run을 가리킨다. 적재물에서 실행 로그로
@@ -163,8 +172,8 @@ def put_stores(
         Body=json.dumps(manifest, ensure_ascii=False, indent=2).encode("utf-8"),
     )
 
-    logger.info("s3://%s/%s 에 %d건 적재", bucket, base, len(stores))
-    return f"s3://{bucket}/{base}"
+    logger.info("s3://%s/%s/%s 에 %d건 적재", bucket, base, name, len(stores))
+    return f"s3://{bucket}/{base}/{name}"
 
 
 @task(retries=3, retry_delay_seconds=[2, 5, 10])
@@ -293,6 +302,9 @@ def _restore(row: dict[str, str]) -> dict[str, Any]:
 def read_stores(*, platform: Platform, dt: date) -> list[dict[str, Any]]:
     """collect 파티션을 읽는다. enrich와 검증이 쓴다.
 
+    파일은 manifest의 `file`이 가리키는 것 하나만 읽는다. 파티션에 남은 이전
+    실행의 CSV는 이력일 뿐 현재가 아니다.
+
     manifest의 count와 실제 건수가 다르면 적재가 중간에 끊긴 것이므로 막는다.
     줄이 아니라 CSV 레코드를 센다. 주소에 줄바꿈이 섞이면 한 레코드가 여러
     줄로 인용되므로 줄 수로 세면 건수가 부풀려진다.
@@ -301,13 +313,13 @@ def read_stores(*, platform: Platform, dt: date) -> list[dict[str, Any]]:
     client = _client()
     base = partition(COLLECT_PREFIX, platform=platform, dt=dt)
 
-    body = client.get_object(Bucket=bucket, Key=f"{base}/{STORES_NAME}")["Body"].read()
-    text = body.decode("utf-8")
-    records = [_restore(row) for row in csv.DictReader(io.StringIO(text))]
-
     manifest = json.loads(
         client.get_object(Bucket=bucket, Key=f"{base}/{MANIFEST_NAME}")["Body"].read()
     )
+    body = client.get_object(Bucket=bucket, Key=f"{base}/{manifest['file']}")["Body"].read()
+    text = body.decode("utf-8")
+    records = [_restore(row) for row in csv.DictReader(io.StringIO(text))]
+
     if manifest["count"] != len(records):
         raise ValueError(
             f"{base} manifest count {manifest['count']} 와 실제 {len(records)}건이 "

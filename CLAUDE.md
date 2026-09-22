@@ -277,7 +277,7 @@ Prefect 3에서 동기 서브플로우 호출은 순차입니다. `ThreadPoolExe
 
 ```text
 raw/     platform=<브랜드>/dt=<날짜>/<이름>.gz
-collect/ platform=<브랜드>/dt=<날짜>/stores.csv
+collect/ platform=<브랜드>/dt=<날짜>/<HHMMSS>.csv
                                    /_manifest.json
 runs/    dt=<날짜>/collect.json
 ```
@@ -294,7 +294,12 @@ runs/    dt=<날짜>/collect.json
 포인터는 갱신 시점에 경합이 있고, 과거 날짜를 백필하면 최신이 뒤로 밀립니다.
 
 - 파티션 날짜는 KST임. UTC로 끊으면 새벽 실행이 전날 파티션에 들어감
-- 같은 날 재실행은 같은 키를 덮어씀. 단일 객체 PUT은 원자적이라 멱등함
+- CSV 파일명은 적재 시각(KST)임. 같은 날 재실행하면 파일이 하나 더 생기고 이전
+  것은 남음. `_manifest.json`은 파티션에 하나뿐이며 최근 실행이 덮어쓰고 `file`로
+  현재 CSV를 가리킴. manifest 교체는 단일 객체 PUT이라 원자적임
+- 읽는 쪽은 manifest의 `file`만 따라감. Glue를 붙이면 파티션의 CSV를 전부 읽어
+  같은 날 실행이 중복되므로, 그때는 이전 파일을 lifecycle로 치우거나 manifest가
+  가리키는 것만 보게 해야 함
 - `_manifest.json`을 본문보다 **나중에** 올림. 순서가 뒤집히면 manifest만 있고
   데이터가 없는 창이 생김
 - `read_stores`가 manifest의 `count`와 실제 건수를 대조함. 다르면 예외임. 줄이
@@ -810,8 +815,10 @@ DDL을 바꿨다면 `CREATE TABLE IF NOT EXISTS`가 기존 테이블을 고치�
 확인합니다.
 
 적재를 건드렸다면 실행 결과가 아니라 적재물을 봐야 합니다. `make s3-ls`로 키가
-빠짐없이 올라갔는지 보고, 같은 flow를 두 번 돌려 키 수가 늘지 않는지 확인합니다.
-늘어난다면 파티션 경로에 실행마다 바뀌는 값이 섞인 것입니다.
+빠짐없이 올라갔는지 보고, 같은 flow를 두 번 돌려 `collect/`에 CSV만 하나 늘고
+`_manifest.json`은 그대로 하나인지, 그 manifest의 `file`이 나중 파일인지
+확인합니다. `raw/`와 `runs/` 키 수는 늘지 않아야 합니다. 늘어난다면 파티션
+경로에 실행마다 바뀌는 값이 섞인 것입니다.
 
 `flows/common/`의 수집 모듈을 고쳤다면 그것을 쓰는 브랜드를 모두 돌려 건수가
 전과 같은지 봐야 합니다. `imweb_map.py`는 인생네컷과 포토이즘, 돈룩업이 함께 씁니다.
