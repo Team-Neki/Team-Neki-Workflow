@@ -223,8 +223,8 @@ base_url  board_code  referer  platform
 `read_stores`가 빈 칸을 `None`으로, 좌표를 `float`으로 되돌립니다. 이 규칙이
 깨지면 좌표가 문자열인 채로 enrich에 넘어갑니다.
 
-manifest는 CSV로 바꾸지 않습니다. `brands`처럼 중첩된 값을 담고 있어 표로
-펼칠 수 없습니다.
+run manifest는 CSV로 바꾸지 않습니다. `brands`처럼 중첩된 값을 담고 있어 표로
+펼칠 수 없습니다. 브랜드별 적재 위치는 JSON이 아니라 Postgres로 옮겼습니다.
 
 ### 수집 스케줄은 한 곳에만 있습니다
 
@@ -250,12 +250,12 @@ Prefect 3에서 동기 서브플로우 호출은 순차입니다. `ThreadPoolExe
 **여기서 예외를 다시 던지면 나머지 브랜드의 결과까지 버리게 됩니다.** 사이트
 하나가 개편돼 파싱이 깨졌을 때 나머지까지 멈추는 것은 과합니다.
 
-실패한 브랜드는 이전 파티션으로 대신합니다. 그래야 사이트 하나가 깨졌다고 색인에서
-브랜드가 통째로 사라지지 않습니다.
+실패한 브랜드는 이전 사이클의 적재물로 대신합니다. 그래야 사이트 하나가 깨졌다고
+색인에서 브랜드가 통째로 사라지지 않습니다.
 
-**이전 데이터를 오늘 파티션에 복사하지 않습니다.** 오늘 수집한 적 없는 것이 오늘
-것처럼 보이면 collect 계층이 거짓말을 하게 되고, 며칠이 지나도 신선도를 알 수
-없습니다. 대신 run manifest가 브랜드마다 `source_dt`로 어느 파티션을 읽을지
+**이전 데이터를 이번 사이클로 복사하지 않습니다.** 수집한 적 없는 것이 이번 것처럼
+보이면 collect 계층이 거짓말을 하게 되고, 며칠이 지나도 신선도를 알 수 없습니다.
+대신 run manifest가 브랜드마다 `source_target_date`로 어느 사이클을 읽을지
 가리킵니다. 다음 단계는 그것만 보면 되고 신선한지 따로 판단할 필요가 없습니다.
 
 `MAX_STALE_DAYS`(기본 7일)를 넘으면 대신하지 않고 `failed`로 둡니다. 무한정
@@ -278,36 +278,105 @@ Prefect 3에서 동기 서브플로우 호출은 순차입니다. `ThreadPoolExe
 ```text
 raw/     platform=<브랜드>/dt=<날짜>/<이름>.gz
 collect/ platform=<브랜드>/dt=<날짜>/<HHMMSS>.csv
-                                   /_manifest.json
-runs/    dt=<날짜>/collect.json
+runs/    dt=<대상 일자>/collect.json
 ```
 
+`collect/` 안에는 Hive 파티션과 CSV만 둡니다. 그래야 Glue를 그대로 붙일 수 있고,
+다른 것이 섞이면 파티션 인식이 깨집니다. **적재물의 위치는 S3가 아니라 Postgres가
+압니다.** `tb_store_collect_manifest`가 적재 한 번마다 한 행으로 경로와 건수를
+들고 있습니다. 아래 "수집 manifest는 Postgres에 있습니다"를 보세요.
+
 `runs/`는 실행 하나를 설명합니다. 어느 브랜드가 성공하고 실패했는지, 실패 사유가
-무엇인지 담습니다. 파티션마다 있는 `_manifest.json`으로는 답할 수 없습니다.
-**없는 파티션은 없다는 사실 자체가 기록되지 않기 때문입니다.** enrich는 이걸 보고
-무엇을 처리할지 정합니다.
-
-`collect/` 밖에 두는 것이 중요합니다. 그쪽은 Hive 파티션만 있어야 Glue를 그대로
-붙일 수 있고, 다른 것이 섞이면 파티션 인식이 깨집니다.
-
-최신 파티션은 `latest_dt`가 목록으로 찾습니다. 포인터 객체를 따로 두지 않습니다.
-포인터는 갱신 시점에 경합이 있고, 과거 날짜를 백필하면 최신이 뒤로 밀립니다.
+무엇인지 담습니다. manifest 행으로는 답할 수 없습니다. **없는 행은 없다는 사실
+자체가 기록되지 않기 때문입니다.** enrich는 이걸 보고 무엇을 처리할지 정합니다.
+`brands`처럼 중첩된 값을 담고 있어 표로 펼칠 수 없으므로 이것만 JSON으로 남습니다.
 
 - 파티션 날짜는 KST임. UTC로 끊으면 새벽 실행이 전날 파티션에 들어감
+- `collect/`와 `raw/`의 `dt=`는 **받은 날짜**고, `runs/`의 `dt=`는 **대상 일자**임.
+  둘은 보통 같고 늦게 집힌 예약 run에서만 갈림
 - CSV 파일명은 적재 시각(KST)임. 같은 날 재실행하면 파일이 하나 더 생기고 이전
-  것은 남음. `_manifest.json`은 파티션에 하나뿐이며 최근 실행이 덮어쓰고 `file`로
-  현재 CSV를 가리킴. manifest 교체는 단일 객체 PUT이라 원자적임
-- 읽는 쪽은 manifest의 `file`만 따라감. Glue를 붙이면 파티션의 CSV를 전부 읽어
-  같은 날 실행이 중복되므로, 그때는 이전 파일을 lifecycle로 치우거나 manifest가
-  가리키는 것만 보게 해야 함
-- `_manifest.json`을 본문보다 **나중에** 올림. 순서가 뒤집히면 manifest만 있고
-  데이터가 없는 창이 생김
-- `read_stores`가 manifest의 `count`와 실제 건수를 대조함. 다르면 예외임. 줄이
-  아니라 CSV 레코드를 셈. 주소에 줄바꿈이 섞이면 한 건이 여러 줄로 인용됨
+  것은 남음. manifest도 행을 하나 더 쌓으므로 파일과 행이 1:1로 맞음
+- 읽는 쪽은 manifest 행의 `s3_path`만 따라감. Glue를 붙이면 파티션의 CSV를 전부
+  읽어 같은 날 실행이 중복되므로, 그때는 이전 파일을 lifecycle로 치우거나
+  manifest가 가리키는 것만 보게 해야 함
+- manifest 행을 본문보다 **나중에** 씀. 순서가 뒤집히면 행만 있고 데이터가 없는
+  창이 생김
+- `read_stores`가 manifest의 `store_count`와 실제 건수를 대조함. 다르면 예외임.
+  줄이 아니라 CSV 레코드를 셈. 주소에 줄바꿈이 섞이면 한 건이 여러 줄로 인용됨
 
 `boto3.Session().client("s3")`에 `endpoint_url`을 넘기지 않습니다. 로컬과 운영의
 차이는 환경변수뿐이어야 합니다. 로컬은 `AWS_PROFILE=neki-local`, 운영은 k8s Secret이
 넣는 자격증명 변수입니다. 코드에 분기를 넣으면 이 성질이 깨집니다.
+
+### 수집 manifest는 Postgres에 있습니다
+
+파티션마다 `_manifest.json`을 두지 않습니다. 객체로 두면 "이 사이클에 어느 브랜드가
+무엇을 남겼나"를 묻는 데 파티션을 전부 나열해야 하고, 브랜드가 늘수록 목록 호출이
+따라 늡니다. enrich가 가장 자주 던지는 질문이 그것이므로 조회 한 번으로 끝나는
+쪽에 둡니다. `flows/common/manifest.py`가 DDL과 조회를 함께 들고 있습니다.
+
+```text
+id           적재 일련번호 (PK)
+platform     브랜드
+target_date  대상 일자
+s3_path      s3://<버킷>/collect/platform=.../dt=.../<HHMMSS>.csv
+store_count  건수
+collected_at 적재 시각
+flow_run_id  적재한 flow run
+```
+
+**실행할 때마다 행을 새로 쌓습니다. 덮어쓰지 않습니다.** 같은 사이클을 두 번
+돌리면 행이 둘이고 그 둘이 곧 이력입니다. S3의 CSV도 적재 시각 이름으로 전부
+남으므로 행과 파일이 1:1로 맞습니다.
+
+그래서 `(platform, target_date)`는 유일하지 않아 키가 되지 못하고, PK는 연번
+대리키 `id`입니다. **읽는 쪽은 "가장 최근 행"을 집어야 합니다.** 조건만 걸고 첫
+행을 쓰면 오래된 적재를 읽습니다. 정렬은 `collected_at`이 아니라 `id`로 합니다.
+같은 초에 두 번 적재되면 시각이 같아 순서가 갈리지 않습니다.
+
+인덱스는 둘입니다. `(target_date, platform, id DESC)`는 사이클 하나를 통째로 받는
+enrich의 길이고, `(platform, target_date DESC, id DESC)`는 브랜드의 최신과 직전을
+찾는 `stores_collect`의 길입니다. 둘 다 `id`를 꼬리에 달아 같은 사이클의 여러 적재
+중 최신이 먼저 나오게 합니다.
+
+법정동, 지하철 역과 달리 테이블 바꿔치기를 하지 않습니다. 그쪽은 매 실행이 전량
+스냅샷이지만 여기는 실행마다 한 브랜드의 한 줄이 늘 뿐이라 누적이 곧 이력입니다.
+`CREATE TABLE IF NOT EXISTS`는 기존 테이블을 고치지 않으므로 컬럼을 바꾸면
+`DROP TABLE` 후 다시 돌려야 합니다.
+
+**`ensure_table`이 권고 락을 먼저 잡습니다.** 브랜드 11개가 스레드로 겹쳐 도는데
+테이블이 없는 첫 실행이면 동시에 만들려다 `pg_type` 유니크 위반이 납니다.
+`CREATE TABLE IF NOT EXISTS`는 경합에 안전하지 않습니다.
+
+**이 때문에 수집 flow에 `DATABASE_URL`이 필요해졌습니다.** 이전에는 S3만 있으면
+돌았습니다. `persist=False`로 끄면 여전히 DB 없이 파싱만 볼 수 있습니다.
+
+#### 대상 일자(`target_date`)
+
+`collected_at`은 우리가 언제 받았는지고, `target_date`는 이 적재물이 어느 수집
+사이클의 것인지입니다. 둘은 보통 같지만 갈릴 때가 있습니다.
+
+```text
+월요일 04:00 예약 run 이 워커 부재로 쌓였다가 수요일에 집힘
+    collected_at  2026-09-23 15:02 (수)
+    target_date   2026-09-21       (월)
+
+수요일에 손으로 실행
+    collected_at  2026-09-23 15:02
+    target_date   2026-09-23
+```
+
+지금 도는 flow run의 예약 시각(`scheduled_start_time`)을 KST로 끊어 정합니다.
+**cron을 역산하지 않습니다.** `flows/`가 스케줄을 알면 안 되기 때문입니다. 예약
+시각은 Prefect가 run 레코드에 이미 박아둔 값이라 스케줄을 몰라도 읽힙니다.
+
+**`stores_collect`가 이 값을 한 번 정해 브랜드 flow로 내려보냅니다.** 브랜드를
+`ThreadPoolExecutor`로 부르는데, 스레드를 건너면 Prefect의 flow run 컨텍스트가
+따라가지 않아 브랜드 run이 서브플로우가 아니라 독립 run으로 뜹니다
+(`parent_flow_run_id`가 `None`). 그래서 브랜드 안에서 `target_date()`를 부르면
+자기 시작 시각이 나오고 월요일 사이클이 수요일로 기록됩니다. root를 따라 올라가는
+방법도 부모 연결이 없어 쓸 수 없으므로, 인자로 내려보내는 것이 유일한 길입니다.
+브랜드 flow의 `target_date` 파라미터가 그것이며 백필에도 그대로 씁니다.
 
 ### 법정동 코드는 Postgres에 직접 적재합니다
 
@@ -750,8 +819,8 @@ Prefect 3.8 기준입니다.
 make check
 ```
 
-flow 로직만 바꿨다면 단독 실행으로 충분합니다. 수집 flow는 S3에 적재하므로
-LocalStack이 먼저 떠 있어야 합니다.
+flow 로직만 바꿨다면 단독 실행으로 충분합니다. 수집 flow는 S3와 Postgres에
+적재하므로 LocalStack이 떠 있고 `DATABASE_URL`이 있어야 합니다.
 
 ```bash
 make localstack
@@ -815,10 +884,24 @@ DDL을 바꿨다면 `CREATE TABLE IF NOT EXISTS`가 기존 테이블을 고치�
 확인합니다.
 
 적재를 건드렸다면 실행 결과가 아니라 적재물을 봐야 합니다. `make s3-ls`로 키가
-빠짐없이 올라갔는지 보고, 같은 flow를 두 번 돌려 `collect/`에 CSV만 하나 늘고
-`_manifest.json`은 그대로 하나인지, 그 manifest의 `file`이 나중 파일인지
-확인합니다. `raw/`와 `runs/` 키 수는 늘지 않아야 합니다. 늘어난다면 파티션
-경로에 실행마다 바뀌는 값이 섞인 것입니다.
+빠짐없이 올라갔는지 보고, 같은 flow를 두 번 돌려 `collect/`에 CSV가 하나 늘고
+`tb_store_collect_manifest`에 행도 하나 느는지, 그 행의 `s3_path`가 나중 파일을
+가리키는지 확인합니다. `raw/`와 `runs/` 키 수는 늘지 않아야 합니다. 늘어난다면
+파티션 경로에 실행마다 바뀌는 값이 섞인 것입니다. `collect/` 안에
+`_manifest.json`이 다시 생기면 안 됩니다.
+
+manifest 테이블을 건드렸다면 **테이블이 없는 상태부터** 확인해야 합니다.
+`ensure_table`이 처음 만드는 경로가 따로입니다.
+
+```bash
+psql -c 'DROP TABLE IF EXISTS tb_store_collect_manifest'
+make collect
+make collect
+psql -c "select platform, count(*) from tb_store_collect_manifest group by 1"
+```
+
+브랜드마다 행이 2건이어야 합니다. 1건이면 덮어쓰고 있는 것이고, 인덱스 이름에
+번호가 붙으면 `IF NOT EXISTS`가 빠진 것입니다.
 
 `flows/common/`의 수집 모듈을 고쳤다면 그것을 쓰는 브랜드를 모두 돌려 건수가
 전과 같은지 봐야 합니다. `imweb_map.py`는 인생네컷과 포토이즘, 돈룩업이 함께 씁니다.

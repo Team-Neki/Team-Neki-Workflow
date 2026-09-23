@@ -49,73 +49,73 @@ check: ## 임포트와 deployment 수집을 확인한다
 hello: ## hello 워크플로를 실행한다
 	$(UV) run python -c "from flows.hello import hello; hello()"
 
-lifefourcuts: ## 인생네컷 지점을 수집한다
+lifefourcuts: ## 인생네컷 지점을 수집한다 (S3, DATABASE_URL 필요)
 	@$(UV) run python -c "\
 	from flows.lifefourcuts_stores import lifefourcuts_stores; \
 	stores = lifefourcuts_stores(); \
 	print('수집', len(stores), '건')"
 
-photoism: ## 포토이즘 지점을 수집한다
+photoism: ## 포토이즘 지점을 수집한다 (S3, DATABASE_URL 필요)
 	@$(UV) run python -c "\
 	from flows.photoism_stores import photoism_stores; \
 	stores = photoism_stores(); \
 	print('수집', len(stores), '건')"
 
-dontlxxkup: ## 돈룩업 지점을 수집한다
+dontlxxkup: ## 돈룩업 지점을 수집한다 (S3, DATABASE_URL 필요)
 	@$(UV) run python -c "\
 	from flows.dontlxxkup_stores import dontlxxkup_stores; \
 	stores = dontlxxkup_stores(); \
 	print('수집', len(stores), '건')"
 
-photosignature: ## 포토시그니처 지점을 수집한다
+photosignature: ## 포토시그니처 지점을 수집한다 (S3, DATABASE_URL 필요)
 	@$(UV) run python -c "\
 	from flows.photosignature_stores import photosignature_stores; \
 	stores = photosignature_stores(); \
 	print('수집', len(stores), '건')"
 
-photogray: ## 포토그레이 지점을 수집한다 (KAKAO_API_KEY 필요)
+photogray: ## 포토그레이 지점을 수집한다 (KAKAO_API_KEY, S3, DATABASE_URL 필요)
 	@$(UV) run python -c "\
 	from flows.photogray_stores import photogray_stores; \
 	stores = photogray_stores(); \
 	print('수집', len(stores), '건')"
 
-planbstudio: ## 플랜비스튜디오 지점을 수집한다
+planbstudio: ## 플랜비스튜디오 지점을 수집한다 (S3, DATABASE_URL 필요)
 	@$(UV) run python -c "\
 	from flows.planbstudio_stores import planbstudio_stores; \
 	stores = planbstudio_stores(); \
 	print('수집', len(stores), '건')"
 
-picdot: ## 픽닷 지점을 수집한다 (KAKAO_API_KEY 필요)
+picdot: ## 픽닷 지점을 수집한다 (KAKAO_API_KEY, S3, DATABASE_URL 필요)
 	@$(UV) run python -c "\
 	from flows.picdot_stores import picdot_stores; \
 	stores = picdot_stores(); \
 	print('수집', len(stores), '건')"
 
-monomansion: ## 모노맨션 지점을 수집한다 (KAKAO_API_KEY 필요)
+monomansion: ## 모노맨션 지점을 수집한다 (KAKAO_API_KEY, S3, DATABASE_URL 필요)
 	@$(UV) run python -c "\
 	from flows.monomansion_stores import monomansion_stores; \
 	stores = monomansion_stores(); \
 	print('수집', len(stores), '건')"
 
-harufilm: ## 하루필름 지점을 수집한다 (KAKAO_API_KEY 필요)
+harufilm: ## 하루필름 지점을 수집한다 (KAKAO_API_KEY, S3, DATABASE_URL 필요)
 	@$(UV) run python -c "\
 	from flows.harufilm_stores import harufilm_stores; \
 	stores = harufilm_stores(); \
 	print('수집', len(stores), '건')"
 
-photolabplus: ## 포토랩플러스 지점을 수집한다 (KAKAO_API_KEY 필요)
+photolabplus: ## 포토랩플러스 지점을 수집한다 (KAKAO_API_KEY, S3, DATABASE_URL 필요)
 	@$(UV) run python -c "\
 	from flows.photolabplus_stores import photolabplus_stores; \
 	stores = photolabplus_stores(); \
 	print('수집', len(stores), '건')"
 
-broomstudio: ## 비룸스튜디오 지점을 수집한다 (KAKAO_API_KEY 필요)
+broomstudio: ## 비룸스튜디오 지점을 수집한다 (KAKAO_API_KEY, S3, DATABASE_URL 필요)
 	@$(UV) run python -c "\
 	from flows.broomstudio_stores import broomstudio_stores; \
 	stores = broomstudio_stores(); \
 	print('수집', len(stores), '건')"
 
-collect: ## 전체 브랜드를 병렬로 수집한다 (KAKAO_API_KEY, S3 필요)
+collect: ## 전체 브랜드를 병렬로 수집한다 (KAKAO_API_KEY, S3, DATABASE_URL 필요)
 	@$(UV) run python -c "\
 	from flows.stores_collect import stores_collect; \
 	results = stores_collect(); \

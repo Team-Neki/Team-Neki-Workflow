@@ -5,6 +5,7 @@
 """
 
 import json
+from datetime import date
 
 from prefect import flow, get_run_logger
 
@@ -18,7 +19,11 @@ QUERY = "픽닷"
 
 
 @flow(name="picdot-stores", log_prints=True)
-def picdot_stores(query: str = QUERY, persist: bool = True) -> list[CollectedStore]:
+def picdot_stores(
+    query: str = QUERY,
+    persist: bool = True,
+    target_date: date | None = None,
+) -> list[CollectedStore]:
     """좌표 사각형을 쪼개가며 전량을 받아온다.
 
     현재 30곳이라 한 질의로 꺼낼 수 있는 45건 안에 들어오지만, 분할 로직에
@@ -26,6 +31,9 @@ def picdot_stores(query: str = QUERY, persist: bool = True) -> list[CollectedSto
     사각형을 쪼개지 않으므로 지금은 호출 수도 예전과 같다.
 
     persist를 끄면 S3에 적재하지 않는다. 파싱만 확인할 때 쓴다.
+
+    `target_date` 는 이 적재물이 어느 수집 사이클의 것인지다. `stores_collect`
+    가 묶어 돌 때 내려보내며, 단독 실행이면 이 run 의 예약 시각에서 정해진다.
     """
     logger = get_run_logger()
 
@@ -57,7 +65,7 @@ def picdot_stores(query: str = QUERY, persist: bool = True) -> list[CollectedSto
             platform=Platform.PICDOT,
             name="documents.json",
         )
-        put_stores(stores, platform=Platform.PICDOT)
+        put_stores(stores, platform=Platform.PICDOT, target_date=target_date)
 
     logger.info("수집 완료: 지점 %d건 (total_count %d)", len(stores), expected)
     return stores

@@ -1,6 +1,7 @@
 """모노맨션 지점 목록을 Kakao 장소검색으로 수집한다."""
 
 import json
+from datetime import date
 
 from prefect import flow, get_run_logger
 
@@ -17,6 +18,7 @@ QUERY = "모노맨션"
 def monomansion_stores(
     query: str = QUERY,
     persist: bool = True,
+    target_date: date | None = None,
 ) -> list[CollectedStore]:
     """좌표 사각형을 쪼개가며 전량을 받아온다.
 
@@ -24,6 +26,9 @@ def monomansion_stores(
     끝나지 않으므로 사각형 분할이 필요하다. 분할 자체는 common.kakao가 맡는다.
 
     persist를 끄면 S3에 적재하지 않는다. 파싱만 확인할 때 쓴다.
+
+    `target_date` 는 이 적재물이 어느 수집 사이클의 것인지다. `stores_collect`
+    가 묶어 돌 때 내려보내며, 단독 실행이면 이 run 의 예약 시각에서 정해진다.
     """
     logger = get_run_logger()
 
@@ -55,7 +60,7 @@ def monomansion_stores(
             platform=Platform.MONO_MANSION,
             name="documents.json",
         )
-        put_stores(stores, platform=Platform.MONO_MANSION)
+        put_stores(stores, platform=Platform.MONO_MANSION, target_date=target_date)
 
     logger.info("수집 완료: 지점 %d건 (total_count %d)", len(stores), expected)
     return stores

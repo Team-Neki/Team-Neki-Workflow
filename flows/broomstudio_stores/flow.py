@@ -7,6 +7,7 @@
 
 import json
 from collections.abc import Sequence
+from datetime import date
 from typing import Any
 
 from prefect import flow, get_run_logger
@@ -64,12 +65,16 @@ def _split_branches(
 def broomstudio_stores(
     queries: Sequence[str] = QUERIES,
     persist: bool = True,
+    target_date: date | None = None,
 ) -> list[CollectedStore]:
     """질의 결과를 장소 id 로 합친다. 두 질의에 걸리는 지점이 있어도 중복이 없다.
 
     이름과 주소는 Kakao 가 준 그대로 담는다. 그 해석은 enrich 의 일이다.
 
     persist 를 끄면 S3 에 적재하지 않는다. 파싱만 확인할 때 쓴다.
+
+    `target_date` 는 이 적재물이 어느 수집 사이클의 것인지다. `stores_collect`
+    가 묶어 돌 때 내려보내며, 단독 실행이면 이 run 의 예약 시각에서 정해진다.
     """
     logger = get_run_logger()
 
@@ -125,7 +130,7 @@ def broomstudio_stores(
             platform=Platform.BROOM_STUDIO,
             name="documents.json",
         )
-        put_stores(stores, platform=Platform.BROOM_STUDIO)
+        put_stores(stores, platform=Platform.BROOM_STUDIO, target_date=target_date)
 
     logger.info("수집 완료: 지점 %d건 (질의 %d개)", len(stores), len(queries))
     return stores

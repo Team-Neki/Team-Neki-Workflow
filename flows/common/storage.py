@@ -9,7 +9,7 @@ worker의 IAM role이 실제 S3를 가리킨다. 이관은 프로파일 교체�
 
     raw/     platform=<브랜드>/dt=<날짜>/<이름>.gz
     collect/ platform=<브랜드>/dt=<날짜>/<HHMMSS>.csv
-                                       /_manifest.json
+    runs/    dt=<날짜>/collect.json
 
 `dt=` Hive 파티션이라 이후 Glue나 Athena를 그대로 붙일 수 있다. 포맷은 헤더
 있는 CSV다. 다음 단계가 Postgres COPY로 그대로 받고, 사람이 볼 때도 S3 콘솔과
@@ -19,12 +19,15 @@ collect는 압축하지 않는다. 하루 전량이 수백 KB라 줄여서 얻�
 압축하면 바로 열린다는 이점이 사라진다. raw/는 HTML 원문이라 gzip으로 둔다.
 
 CSV 파일명은 적재 시각(KST)이다. 같은 날 다시 돌리면 파일이 하나 더 생기고
-이전 것은 남는다. 파티션의 `_manifest.json`은 하나뿐이며 가장 최근 실행이
-덮어쓰고 `file`로 어느 CSV가 현재인지 가리킨다. 읽는 쪽은 manifest만 따라간다.
+이전 것은 남는다. **어느 파일이 현재인지는 S3 가 아니라 Postgres 가 안다.**
+`flows/common/manifest.py` 의 `tb_store_collect_manifest` 가 적재 한 번마다 한
+행으로 경로와 건수를 들고 있고, 읽는 쪽은 그 사이클의 마지막 행을 따라간다.
+파일과 행이 1:1 로 쌓이므로 재실행 이력이 양쪽에 같은 모양으로 남는다.
+파티션 안에 `_manifest.json` 을 두지 않으므로 `collect/` 에는 Hive 파티션과
+CSV 만 남는다.
 
 CSV는 타입이 없어 읽는 쪽이 되돌려야 한다. 열 목록이 곧 계약이므로 `COLUMNS`가
-정본이고, 여기 없는 필드를 적재하면 `DictWriter`가 막는다. manifest는 중첩
-구조라 CSV로 표현할 수 없어 JSON으로 남긴다.
+정본이고, 여기 없는 필드를 적재하면 `DictWriter`가 막는다.
 """
 
 import csv
@@ -40,6 +43,8 @@ import boto3
 from prefect import get_run_logger, task
 from prefect.runtime import flow_run
 
+from flows.common.manifest import put_manifest, read_manifest
+from flows.common.manifest import target_date as cycle_date
 from flows.common.platform import Platform
 
 BUCKET_ENV = "S3_BUCKET"
@@ -49,11 +54,11 @@ COLLECT_PREFIX = "collect"
 
 # 실행 하나를 설명하는 manifest. collect/ 안에 두지 않는다. 그쪽은 Hive 파티션만
 # 있어야 나중에 Glue 를 그대로 붙일 수 있고, 다른 것이 섞이면 파티션 인식이
-# 깨진다.
+# 깨진다. 브랜드마다의 적재 위치와 달리 `brands` 가 중첩 구조라 표로 펼칠 수
+# 없어 테이블로 옮기지 않고 JSON 으로 남긴다.
 RUNS_PREFIX = "runs"
 
 STORES_NAME_FORMAT = "%H%M%S.csv"
-MANIFEST_NAME = "_manifest.json"
 RUN_MANIFEST_NAME = "collect.json"
 
 # CSV 열 순서. 적재물의 스키마 계약이라 CollectedStore에 필드를 더하면 여기에도
@@ -102,10 +107,22 @@ def partition(prefix: str, *, platform: Platform, dt: date) -> str:
     return f"{prefix}/platform={platform}/dt={dt:%Y-%m-%d}"
 
 
+def _split_uri(uri: str) -> tuple[str, str]:
+    """`s3://버킷/키` 를 나눈다.
+
+    manifest 가 전체 경로를 들고 있으므로 읽는 쪽은 버킷을 환경변수에서
+    다시 찾지 않는다. 행만 보고 파일에 닿을 수 있어야 한다.
+    """
+    bucket, _, key = uri.removeprefix("s3://").partition("/")
+    if not bucket or not key:
+        raise ValueError(f"S3 경로가 아닙니다: {uri}")
+    return bucket, key
+
+
 def _record(store: Any, *, collected_at: datetime) -> dict[str, Any]:
     """dataclass를 CSV 한 줄로 옮긴다.
 
-    collected_at을 여기서 붙인다. enrich가 4개 브랜드를 한 파일로 합치고 나면
+    collected_at을 여기서 붙인다. enrich가 여러 브랜드를 한 파일로 합치고 나면
     브랜드마다 수집 시각이 다를 수 있어(한 브랜드만 실패해 어제 것을 쓰는 경우)
     줄마다 들고 있어야 구분된다.
     """
@@ -121,20 +138,26 @@ def put_stores(
     *,
     platform: Platform,
     dt: date | None = None,
+    target_date: date | None = None,
 ) -> str:
-    """수집 결과를 collect 파티션에 적재하고 manifest를 남긴다.
+    """수집 결과를 collect 파티션에 적재하고 manifest 행을 남긴다.
 
-    파일명이 적재 시각이라 같은 날 다시 실행해도 이전 CSV를 덮어쓰지 않는다.
-    manifest만 덮어쓰며 단일 객체 PUT이라 원자적이다. 읽는 쪽은 manifest의
-    `file`을 따라가므로 언제 읽어도 완결된 실행 하나를 본다.
+    `dt` 는 파티션 날짜, 즉 우리가 언제 받았는지다. `target_date` 는 이 적재물이
+    어느 수집 사이클의 것인지이며 manifest 의 키가 된다. 둘은 보통 같고, 예약된
+    run 이 늦게 집혔을 때만 갈린다. 자세한 것은 `flows/common/manifest.py` 에
+    남겼다.
 
-    manifest가 없으면 다음 단계가 부분 실패한 파티션을 정상으로 오해한다.
-    그래서 본문을 먼저 올리고 manifest를 나중에 올린다. 순서가 뒤집히면
-    manifest만 있고 데이터가 없는 창이 생긴다.
+    파일명이 적재 시각이라 같은 날 다시 실행해도 이전 CSV를 덮어쓰지 않고,
+    manifest 도 행을 하나 더 쌓는다. 읽는 쪽은 사이클의 마지막 행이 가리키는
+    `s3_path` 를 따라가므로 언제 읽어도 완결된 실행 하나를 본다.
+
+    본문을 먼저 올리고 manifest 를 나중에 쓴다. 순서가 뒤집히면 manifest 만 있고
+    데이터가 없는 창이 생겨 다음 단계가 없는 파일을 읽으러 간다.
     """
     logger = get_run_logger()
 
     dt = dt or today()
+    target_date = target_date or cycle_date()
     collected_at = datetime.now(KST)
 
     bucket = _bucket()
@@ -151,29 +174,29 @@ def put_stores(
 
     body = buffer.getvalue().encode("utf-8")
     name = collected_at.strftime(STORES_NAME_FORMAT)
+    uri = f"s3://{bucket}/{base}/{name}"
 
     client.put_object(Bucket=bucket, Key=f"{base}/{name}", Body=body)
 
-    manifest = {
-        "platform": str(platform),
-        "dt": f"{dt:%Y-%m-%d}",
-        # 이 파티션에서 현재로 삼는 CSV. 같은 날 여러 번 돌리면 파일이 여럿이라
-        # 이 필드가 없으면 읽는 쪽이 어느 것을 볼지 정할 수 없다.
-        "file": name,
-        "count": len(stores),
-        "collected_at": collected_at.isoformat(),
-        # task 안에서도 부모 flow run을 가리킨다. 적재물에서 실행 로그로
+    manifest_id = put_manifest(
+        platform=platform,
+        target_date=target_date,
+        s3_path=uri,
+        store_count=len(stores),
+        collected_at=collected_at,
+        # task 안에서도 감싸고 있는 flow run을 가리킨다. 적재물에서 실행 로그로
         # 되짚어갈 수 있어야 원인을 찾는다.
-        "flow_run_id": flow_run.id,
-    }
-    client.put_object(
-        Bucket=bucket,
-        Key=f"{base}/{MANIFEST_NAME}",
-        Body=json.dumps(manifest, ensure_ascii=False, indent=2).encode("utf-8"),
+        flow_run_id=flow_run.id,
     )
 
-    logger.info("s3://%s/%s/%s 에 %d건 적재", bucket, base, name, len(stores))
-    return f"s3://{bucket}/{base}/{name}"
+    logger.info(
+        "%s 에 %d건 적재 (사이클 %s, manifest #%d)",
+        uri,
+        len(stores),
+        f"{target_date:%Y-%m-%d}",
+        manifest_id,
+    )
+    return uri
 
 
 @task(retries=3, retry_delay_seconds=[2, 5, 10])
@@ -205,36 +228,41 @@ def put_raw(
 
 
 @task(retries=3, retry_delay_seconds=[2, 5, 10])
-def put_run_manifest(brands: dict[str, dict[str, Any]], *, dt: date | None = None) -> str:
+def put_run_manifest(
+    brands: dict[str, dict[str, Any]], *, target_date: date | None = None
+) -> str:
     """수집 실행 하나를 설명하는 manifest 를 남긴다.
 
-    브랜드 하나가 실패해도 나머지는 적재하므로, 다음 단계는 "오늘 무엇이 쓸 수
-    있는가"를 알아야 한다. 파티션마다 있는 _manifest.json 으로는 답할 수 없다.
-    없는 파티션은 없다는 사실 자체가 기록되지 않기 때문이다.
+    브랜드 하나가 실패해도 나머지는 적재하므로, 다음 단계는 "이 사이클에 무엇이
+    쓸 수 있는가"를 알아야 한다. 브랜드별 manifest 행으로는 답할 수 없다.
+    없는 행은 없다는 사실 자체가 기록되지 않기 때문이다.
+
+    파티션을 `target_date` 로 끊는다. 브랜드별 manifest 와 같은 사이클을 가리켜야
+    다음 단계가 둘을 맞붙일 수 있다.
     """
     logger = get_run_logger()
 
-    dt = dt or today()
+    target_date = target_date or cycle_date()
     bucket = _bucket()
-    key = f"{RUNS_PREFIX}/dt={dt:%Y-%m-%d}/{RUN_MANIFEST_NAME}"
+    key = f"{RUNS_PREFIX}/dt={target_date:%Y-%m-%d}/{RUN_MANIFEST_NAME}"
 
     succeeded = sorted(k for k, v in brands.items() if v.get("status") == "ok")
     stale = sorted(k for k, v in brands.items() if v.get("status") == "stale")
     failed = sorted(k for k, v in brands.items() if v.get("status") == "failed")
 
     manifest = {
-        "dt": f"{dt:%Y-%m-%d}",
+        "target_date": f"{target_date:%Y-%m-%d}",
         "finished_at": datetime.now(KST).isoformat(),
         "flow_run_id": flow_run.id,
         "succeeded": succeeded,
-        # 오늘 수집은 실패했지만 이전 파티션으로 대신하는 브랜드다. 다음 단계는
-        # 이들도 처리하되 데이터가 오래됐음을 알아야 한다.
+        # 이번 사이클 수집은 실패했지만 이전 것으로 대신하는 브랜드다. 다음
+        # 단계는 이들도 처리하되 데이터가 오래됐음을 알아야 한다.
         "stale": stale,
         # 대신할 것조차 없는 브랜드다. 다음 단계가 다룰 수 없다.
         "failed": failed,
         "total": sum(v.get("count") or 0 for v in brands.values()),
-        # 브랜드마다 어느 파티션을 읽어야 하는지 담는다. 다음 단계는 이것만 보면
-        # 되고 신선한지 여부를 따로 판단할 필요가 없다.
+        # 브랜드마다 manifest 테이블의 어느 사이클 행을 읽어야 하는지 담는다.
+        # 다음 단계는 이것만 보면 되고 신선한지 여부를 따로 판단할 필요가 없다.
         "brands": brands,
     }
 
@@ -248,42 +276,11 @@ def put_run_manifest(brands: dict[str, dict[str, Any]], *, dt: date | None = Non
     return f"s3://{bucket}/{key}"
 
 
-def read_run_manifest(dt: date) -> dict[str, Any]:
+def read_run_manifest(target_date: date) -> dict[str, Any]:
     """수집 실행 manifest 를 읽는다. enrich 가 무엇을 처리할지 여기서 정한다."""
-    key = f"{RUNS_PREFIX}/dt={dt:%Y-%m-%d}/{RUN_MANIFEST_NAME}"
+    key = f"{RUNS_PREFIX}/dt={target_date:%Y-%m-%d}/{RUN_MANIFEST_NAME}"
     body = _client().get_object(Bucket=_bucket(), Key=key)["Body"].read()
     return json.loads(body)
-
-
-def read_manifest(platform: Platform, dt: date) -> dict[str, Any]:
-    """파티션 하나의 manifest 를 읽는다."""
-    base = partition(COLLECT_PREFIX, platform=platform, dt=dt)
-    body = _client().get_object(Bucket=_bucket(), Key=f"{base}/{MANIFEST_NAME}")["Body"]
-    return json.loads(body.read())
-
-
-def latest_dt(platform: Platform) -> date | None:
-    """브랜드의 가장 최근 collect 파티션 날짜를 찾는다.
-
-    포인터 객체를 따로 두지 않고 목록을 본다. 포인터는 갱신 시점에 경합이 있고,
-    과거 날짜를 백필하면 최신이 뒤로 밀리는 사고가 난다. 파티션 수가 많지
-    않으므로 목록이 더 안전하다.
-    """
-    prefix = f"{COLLECT_PREFIX}/platform={platform}/"
-
-    pages = _client().get_paginator("list_objects_v2").paginate(
-        Bucket=_bucket(), Prefix=prefix, Delimiter="/"
-    )
-    partitions = [
-        item["Prefix"].removeprefix(f"{prefix}dt=").rstrip("/")
-        for page in pages
-        for item in page.get("CommonPrefixes", [])
-    ]
-
-    if not partitions:
-        return None
-
-    return date.fromisoformat(max(partitions))
 
 
 def _restore(row: dict[str, str]) -> dict[str, Any]:
@@ -299,31 +296,30 @@ def _restore(row: dict[str, str]) -> dict[str, Any]:
     return record
 
 
-def read_stores(*, platform: Platform, dt: date) -> list[dict[str, Any]]:
-    """collect 파티션을 읽는다. enrich와 검증이 쓴다.
+def read_stores(*, platform: Platform, target_date: date) -> list[dict[str, Any]]:
+    """한 사이클의 collect 적재물을 읽는다. enrich와 검증이 쓴다.
 
-    파일은 manifest의 `file`이 가리키는 것 하나만 읽는다. 파티션에 남은 이전
+    파일은 manifest 행의 `s3_path` 하나만 읽는다. 같은 파티션에 남은 이전
     실행의 CSV는 이력일 뿐 현재가 아니다.
 
-    manifest의 count와 실제 건수가 다르면 적재가 중간에 끊긴 것이므로 막는다.
-    줄이 아니라 CSV 레코드를 센다. 주소에 줄바꿈이 섞이면 한 레코드가 여러
-    줄로 인용되므로 줄 수로 세면 건수가 부풀려진다.
+    manifest의 `store_count`와 실제 건수가 다르면 적재가 중간에 끊긴 것이므로
+    막는다. 줄이 아니라 CSV 레코드를 센다. 주소에 줄바꿈이 섞이면 한 레코드가
+    여러 줄로 인용되므로 줄 수로 세면 건수가 부풀려진다.
     """
-    bucket = _bucket()
-    client = _client()
-    base = partition(COLLECT_PREFIX, platform=platform, dt=dt)
+    manifest = read_manifest(platform, target_date)
+    if manifest is None:
+        raise FileNotFoundError(
+            f"{platform} 의 {target_date:%Y-%m-%d} 사이클 적재 기록이 없습니다."
+        )
 
-    manifest = json.loads(
-        client.get_object(Bucket=bucket, Key=f"{base}/{MANIFEST_NAME}")["Body"].read()
-    )
-    body = client.get_object(Bucket=bucket, Key=f"{base}/{manifest['file']}")["Body"].read()
-    text = body.decode("utf-8")
-    records = [_restore(row) for row in csv.DictReader(io.StringIO(text))]
+    bucket, key = _split_uri(manifest["s3_path"])
+    body = _client().get_object(Bucket=bucket, Key=key)["Body"].read()
+    records = [_restore(row) for row in csv.DictReader(io.StringIO(body.decode("utf-8")))]
 
-    if manifest["count"] != len(records):
+    if manifest["store_count"] != len(records):
         raise ValueError(
-            f"{base} manifest count {manifest['count']} 와 실제 {len(records)}건이 "
-            "다릅니다. 적재가 중간에 끊겼을 수 있습니다."
+            f"{manifest['s3_path']} manifest 의 {manifest['store_count']} 건과 "
+            f"실제 {len(records)}건이 다릅니다. 적재가 중간에 끊겼을 수 있습니다."
         )
 
     return records
