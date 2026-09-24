@@ -9,6 +9,7 @@
 
 import json
 from collections.abc import Sequence
+from datetime import date
 from typing import Any
 
 from prefect import flow, get_run_logger
@@ -57,8 +58,16 @@ def _split_branches(
 
 
 @flow(name="photogray-stores", log_prints=True)
-def photogray_stores(query: str = QUERY, persist: bool = True) -> list[CollectedStore]:
-    """persist를 끄면 S3에 적재하지 않는다. 파싱만 확인할 때 쓴다."""
+def photogray_stores(
+    query: str = QUERY,
+    persist: bool = True,
+    target_date: date | None = None,
+) -> list[CollectedStore]:
+    """persist를 끄면 S3에 적재하지 않는다. 파싱만 확인할 때 쓴다.
+
+    `target_date` 는 이 적재물이 어느 수집 사이클의 것인지다. `stores_collect`
+    가 묶어 돌 때 내려보내며, 단독 실행이면 이 run 의 예약 시각에서 정해진다.
+    """
     logger = get_run_logger()
 
     documents, expected = search_all(query)
@@ -97,7 +106,7 @@ def photogray_stores(query: str = QUERY, persist: bool = True) -> list[Collected
             platform=Platform.PHOTO_GRAY,
             name="documents.json",
         )
-        put_stores(stores, platform=Platform.PHOTO_GRAY)
+        put_stores(stores, platform=Platform.PHOTO_GRAY, target_date=target_date)
 
     logger.info("수집 완료: 지점 %d건 (total_count %d)", len(stores), expected)
     return stores

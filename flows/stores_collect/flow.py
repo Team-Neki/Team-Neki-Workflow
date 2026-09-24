@@ -14,8 +14,14 @@ from typing import Any, Callable
 from prefect import flow, get_run_logger
 
 from flows.broomstudio_stores import broomstudio_stores
+from flows.common.manifest import (
+    ensure_table,
+    latest_manifest,
+    read_manifest,
+    target_date,
+)
 from flows.common.platform import Platform
-from flows.common.storage import latest_dt, put_run_manifest, read_manifest, today
+from flows.common.storage import put_run_manifest
 from flows.dontlxxkup_stores import dontlxxkup_stores
 from flows.harufilm_stores import harufilm_stores
 from flows.lifefourcuts_stores import lifefourcuts_stores
@@ -48,60 +54,66 @@ MAX_STALE_DAYS = 7
 
 
 def _fill_from_previous(
-    results: dict[str, dict[str, Any]], *, dt: date, max_stale_days: int
+    results: dict[str, dict[str, Any]], *, cycle: date, max_stale_days: int
 ) -> None:
-    """실패한 브랜드를 이전 파티션으로 대신한다.
+    """실패한 브랜드를 이전 사이클의 적재물로 대신한다.
 
-    이전 데이터를 오늘 파티션에 복사하지 않는다. 오늘 수집한 적 없는 것이 오늘
-    것처럼 보이면 collect 계층이 거짓말을 하게 되고, 며칠이 지나도 신선도를
-    알 수 없다. 대신 manifest 가 브랜드마다 어느 파티션을 읽을지 가리킨다.
+    이전 데이터를 이번 사이클로 복사하지 않는다. 수집한 적 없는 것이 이번 것처럼
+    보이면 collect 계층이 거짓말을 하게 되고, 며칠이 지나도 신선도를 알 수 없다.
+    대신 run manifest 가 브랜드마다 어느 사이클 행을 읽을지 가리킨다.
     """
     logger = get_run_logger()
 
+    # 브랜드가 전부 실패하면 put_stores 가 한 번도 돌지 않아 테이블이 없을 수
+    # 있다. 그대로 조회하면 UndefinedTable 이 나서 "쓸 수 있는 브랜드가 없다"는
+    # 진짜 이유가 가려진다.
+    ensure_table()
+
     for name, result in results.items():
+        platform = Platform(name)
+
         if result["status"] == "ok":
-            result["source_dt"] = f"{dt:%Y-%m-%d}"
+            result["source_target_date"] = f"{cycle:%Y-%m-%d}"
             result["age_days"] = 0
             continue
 
-        previous = latest_dt(Platform(name))
-        if previous is None:
-            logger.error("%s: 대신할 이전 파티션이 없습니다.", name)
-            continue
-
-        age = (dt - previous).days
-
-        if age == 0:
-            # 오늘 파티션이 이미 있다. 앞선 실행이 성공했거나 단독 실행으로
-            # 채워둔 경우다. 이번 시도는 실패했어도 데이터는 오늘 것이므로
-            # 오래된 것으로 표시하지 않는다.
+        # 이번 시도는 실패했어도 이 사이클 행이 이미 있을 수 있다. 앞선 실행이
+        # 성공했거나 단독 실행으로 채워둔 경우다. 데이터는 이번 사이클 것이므로
+        # 오래된 것으로 표시하지 않는다.
+        current = read_manifest(platform, cycle)
+        if current is not None:
             result["status"] = "ok"
-            result["source_dt"] = f"{previous:%Y-%m-%d}"
+            result["source_target_date"] = f"{cycle:%Y-%m-%d}"
             result["age_days"] = 0
-            result["count"] = read_manifest(Platform(name), previous).get("count")
-            logger.info("%s: 이번 시도는 실패했으나 오늘 파티션이 이미 있습니다.", name)
+            result["count"] = current["store_count"]
+            logger.info("%s: 이번 시도는 실패했으나 이 사이클 적재물이 이미 있습니다.", name)
             continue
+
+        previous = latest_manifest(platform, before=cycle)
+        if previous is None:
+            logger.error("%s: 대신할 이전 적재물이 없습니다.", name)
+            continue
+
+        source = previous["target_date"]
+        age = (cycle - source).days
 
         if age > max_stale_days:
             logger.error(
-                "%s: 가장 최근 파티션이 %s로 %d일 지나 쓰지 않습니다.",
-                name,
-                previous,
-                age,
+                "%s: 가장 최근 적재물이 %s로 %d일 지나 쓰지 않습니다.", name, source, age
             )
-            result["stale_dt"] = f"{previous:%Y-%m-%d}"
+            result["stale_target_date"] = f"{source:%Y-%m-%d}"
             result["age_days"] = age
             continue
 
         result["status"] = "stale"
-        result["source_dt"] = f"{previous:%Y-%m-%d}"
+        result["source_target_date"] = f"{source:%Y-%m-%d}"
         result["age_days"] = age
-        result["count"] = read_manifest(Platform(name), previous).get("count")
+        result["count"] = previous["store_count"]
 
         logger.warning(
-            "%s: 오늘 수집에 실패해 %s 파티션(%d일 전, %s건)으로 대신합니다.",
+            "%s: 이번 수집에 실패해 %s 사이클(%d일 전, %s건)로 대신합니다.",
             name,
-            previous,
+            source,
             age,
             result["count"],
         )
@@ -119,8 +131,8 @@ def stores_collect(
     겹쳐 돈다. 사이트 입장에서는 여전히 한 곳당 순차 접근이다.
 
     한 브랜드가 실패해도 나머지는 적재한다. 사이트 하나가 개편돼 파싱이 깨졌을
-    때 나머지까지 멈추는 것은 과하다. 그리고 실패한 브랜드는 이전 파티션으로
-    대신해 다음 단계가 브랜드를 통째로 잃지 않게 한다.
+    때 나머지까지 멈추는 것은 과하다. 그리고 실패한 브랜드는 이전 사이클의
+    적재물로 대신해 다음 단계가 브랜드를 통째로 잃지 않게 한다.
 
     only 에 platform 이름을 주면 그것만 돌린다. 백필에 쓴다.
     """
@@ -134,11 +146,17 @@ def stores_collect(
     if not targets:
         raise ValueError(f"수집할 브랜드가 없습니다. only={only}")
 
+    # 사이클 날짜를 여기서 한 번 정해 브랜드로 내려보낸다. 스레드를 건너면
+    # Prefect flow run 컨텍스트가 따라가지 않아 브랜드 run 이 서브플로우가 아니라
+    # 독립 run 으로 뜨고, 그러면 브랜드가 자기 시작 시각을 사이클로 삼는다.
+    # 월요일 예약이 수요일에 집혔을 때 수요일로 기록되는 것이 그 증상이다.
+    cycle = target_date()
+
     results: dict[str, dict[str, Any]] = {}
 
     with ThreadPoolExecutor(max_workers=len(targets)) as pool:
         futures = {
-            platform: pool.submit(run, persist=persist)
+            platform: pool.submit(run, persist=persist, target_date=cycle)
             for platform, run in targets.items()
         }
 
@@ -158,7 +176,7 @@ def stores_collect(
             logger.info("%s 수집 %d건", platform, len(stores))
 
     if persist:
-        _fill_from_previous(results, dt=today(), max_stale_days=max_stale_days)
+        _fill_from_previous(results, cycle=cycle, max_stale_days=max_stale_days)
 
     succeeded = [name for name, r in results.items() if r["status"] == "ok"]
     stale = [name for name, r in results.items() if r["status"] == "stale"]
@@ -170,15 +188,15 @@ def stores_collect(
         )
 
     if persist:
-        put_run_manifest(results)
+        put_run_manifest(results, target_date=cycle)
 
     if not succeeded:
         # 전부 이전 데이터로 버티는 상황이다. 개별 사이트 문제가 아니라 네트워크나
         # 배포에 문제가 있을 가능성이 높다.
-        logger.error("오늘 새로 수집된 브랜드가 하나도 없습니다.")
+        logger.error("이번 사이클에 새로 수집된 브랜드가 하나도 없습니다.")
 
     if stale:
-        logger.warning("%d개 브랜드를 이전 파티션으로 대신합니다: %s", len(stale), stale)
+        logger.warning("%d개 브랜드를 이전 사이클로 대신합니다: %s", len(stale), stale)
 
     if failed:
         logger.error("%d개 브랜드가 빠진 채로 진행합니다: %s", len(failed), failed)

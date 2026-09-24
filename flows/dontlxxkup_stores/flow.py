@@ -1,5 +1,7 @@
 """돈룩업 지점 목록을 페이지별로 수집한다."""
 
+from datetime import date
+
 from prefect import flow, get_run_logger
 
 from flows.common.geocode import fill_coordinates
@@ -20,6 +22,7 @@ def dontlxxkup_stores(
     delay_seconds: float = 0.5,
     persist: bool = True,
     geocode: bool = True,
+    target_date: date | None = None,
 ) -> list[CollectedStore]:
     """돈룩업 매장 안내 게시판을 순회한다.
 
@@ -28,6 +31,9 @@ def dontlxxkup_stores(
 
     persist를 끄면 S3에 적재하지 않는다. 파싱만 확인할 때 쓴다. geocode를
     끄면 좌표가 빈 지점을 Kakao로 채우지 않는다. 파싱만 볼 때는 둘 다 끈다.
+
+    `target_date` 는 이 적재물이 어느 수집 사이클의 것인지다. `stores_collect`
+    가 묶어 돌 때 내려보내며, 단독 실행이면 이 run 의 예약 시각에서 정해진다.
     """
     logger = get_run_logger()
 
@@ -47,7 +53,7 @@ def dontlxxkup_stores(
     log_stores(stores, label="돈룩업")
 
     if persist:
-        put_stores(stores, platform=Platform.DONT_LXXK_UP)
+        put_stores(stores, platform=Platform.DONT_LXXK_UP, target_date=target_date)
 
     logger.info("수집 완료: 지점 %d건", len(stores))
     return stores

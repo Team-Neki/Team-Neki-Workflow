@@ -1,6 +1,7 @@
 """플랜비스튜디오 지점 목록을 페이지별로 수집한다."""
 
 import time
+from datetime import date
 
 from prefect import flow, get_run_logger
 
@@ -25,6 +26,7 @@ def planbstudio_stores(
     delay_seconds: float = 0.5,
     persist: bool = True,
     geocode: bool = True,
+    target_date: date | None = None,
 ) -> list[CollectedStore]:
     """목록을 순회하며 지점을 모으고 좌표를 채운다.
 
@@ -36,6 +38,9 @@ def planbstudio_stores(
 
     persist를 끄면 S3에 적재하지 않는다. 파싱만 확인할 때 쓴다. geocode를
     끄면 좌표가 빈 지점을 Kakao로 채우지 않는다. 파싱만 볼 때는 둘 다 끈다.
+
+    `target_date` 는 이 적재물이 어느 수집 사이클의 것인지다. `stores_collect`
+    가 묶어 돌 때 내려보내며, 단독 실행이면 이 run 의 예약 시각에서 정해진다.
     """
     logger = get_run_logger()
 
@@ -81,7 +86,7 @@ def planbstudio_stores(
                 platform=Platform.PLANB_STUDIO,
                 name=f"page-{number:03d}.html",
             )
-        put_stores(stores, platform=Platform.PLANB_STUDIO)
+        put_stores(stores, platform=Platform.PLANB_STUDIO, target_date=target_date)
 
     located = sum(1 for store in stores if store.latitude is not None)
     logger.info("수집 완료: 지점 %d건 (좌표 있음 %d건)", len(stores), located)
