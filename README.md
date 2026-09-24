@@ -15,6 +15,7 @@ flows/
     __init__.py           flow 재노출
     flow.py               @flow
     orders.py             @task
+  stores_enrich/          법정동 보강. collect 의 최신 CSV 를 읽어 Kakao 로 b_code 를 붙임
   common/                 여러 워크플로가 함께 쓰는 task
 aws/config                로컬 개발용 AWS 프로파일
 compose.yaml              로컬 S3 (LocalStack)
@@ -25,6 +26,7 @@ Dockerfile                운영 이미지 - worker와 flow run이 같이 씀
 docs/spec/                수집 파이프라인 정책 (정본). 항목마다 구현 위치 anchor
 docs/runbook.md           배포 절차와 장애 대응
 AGENTS.md                 규약과 함정. 사람과 코딩 에이전트가 같이 읽음
+tests/                    순수 판정 테스트. make check 가 돌림
 ```
 
 의존 방향은 단방향입니다.
@@ -77,6 +79,14 @@ s3://<bucket>/
 어느 CSV 가 현재인지는 S3 가 아니라 Postgres `tb_store_collect_manifest` 가 압니다.
 적재 한 번이 한 행이고 덮어쓰지 않으며, 다음 단계는 `manifest.read_cycle` 이 정해 주는
 행의 `s3_path` 만 따라갑니다. 그래서 수집 flow 에는 `DATABASE_URL` 이 필요합니다.
+
+## 보강 파이프라인 (enrich)
+
+`stores-enrich` 는 매일 05:00 KST 에 collect 가 남긴 브랜드별 최신 CSV 를 읽어
+Kakao `coord2regioncode` 로 법정동 코드를 붙이고, S3 `enrich/dt=` 파티션과
+Postgres `tb_photo_booth_enriched` 세대로 남긴 뒤 서버의 색인 잡을 k8s Job 으로
+띄웁니다. 좌표가 직전 세대와 같은 지점은 Kakao 를 부르지 않습니다. 정책은
+`docs/spec/enrich-pipeline.md` 가 정본입니다.
 
 ## 네이밍 규약
 
@@ -248,7 +258,14 @@ make monomansion
 make harufilm
 make photolabplus
 make broomstudio
+make collect
+make enrich
 ```
+
+`enrich` 는 `collect` 가 남긴 브랜드별 최신 CSV 에 Kakao 로 법정동 코드를 붙여
+`enrich/dt=` 파티션과 `tb_photo_booth_enriched` 테이블에 적재합니다. 두 번 돌리면
+둘째는 전부 재사용이라 Kakao 를 부르지 않습니다. 정책은
+`docs/spec/enrich-pipeline.md` 에 있습니다.
 
 `picdot`, `monomansion`, `photogray`, `harufilm`, `photolabplus`, `broomstudio`는
 Kakao Local API를 호출하므로 `KAKAO_API_KEY`가 필요합니다. `planbstudio`,
@@ -289,8 +306,8 @@ uv run --env-file .env python -c \
    planbstudio_stores(persist=False, geocode=False)"
 ```
 
-`make check`는 임포트와 deployment 수집만 확인합니다. 구조를 바꾼 뒤 회귀를 빠르게
-잡을 때 유용합니다.
+`make check`는 임포트와 deployment 수집, `docs/spec` 의 anchor, `tests/` 의 단위
+테스트를 확인합니다. 구조를 바꾼 뒤 회귀를 빠르게 잡을 때 유용합니다.
 
 ### UI로 확인하기
 

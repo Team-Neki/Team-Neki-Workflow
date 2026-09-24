@@ -10,6 +10,8 @@
 
 - `docs/spec/collect-pipeline.md` : 지점 수집(collect). 산출물 레이아웃, manifest
   테이블, 대상 일자, 대신하기 규칙, 스케줄, 읽는 쪽 계약
+- `docs/spec/enrich-pipeline.md` : 지점 법정동 보강(enrich). 입력, 재사용, 상태,
+  두 산출물, 색인 Job
 
 지켜야 할 것은 셋입니다.
 
@@ -39,6 +41,10 @@ flows/
     __init__.py           flow 재노출
     flow.py               @flow
     orders.py             @task
+  stores_enrich/          법정동 보강. collect 의 최신 CSV 를 읽어 Kakao 로 b_code 를 붙임
+    region.py             판정 (재사용, 폴백, 상태)
+    table.py              tb_photo_booth_enriched 바꿔치기
+    index_job.py          서버 색인 잡을 k8s Job 으로
   common/                 여러 워크플로가 함께 쓰는 task
     store.py              수집 공통 스키마 (CollectedStore)
     storage.py            S3 적재
@@ -51,6 +57,7 @@ Dockerfile                운영 이미지. worker 와 flow run 이 같이 씀
 docs/spec/                수집 파이프라인 정책 (정본). 항목마다 구현 위치 anchor
 docs/runbook.md           배포 절차와 장애 대응
 spec_check.py             docs/spec 의 anchor 가 코드 줄과 맞는지 확인 (make check 에 포함)
+tests/                    순수 판정 테스트. make check 가 돌림. Kakao 와 DB 는 부르지 않음
 ```
 
 의존은 `deployments -> flows` 단방향입니다. `flows/`가 스케줄을 알면 안 됩니다.
@@ -152,6 +159,28 @@ flow run이 work pool 기본 이미지(베이스 prefect 이미지)로 떠서 `f
   브랜드별 deployment 는 cron 없이 둠
 - 수집 flow 는 `DATABASE_URL` 이 있어야 돎. `persist=False` 면 DB 도 S3 도 없이
   파싱만 봄
+
+## 보강 파이프라인 (enrich)
+
+정책은 `docs/spec/enrich-pipeline.md` 가 정본입니다. 코드를 만질 때 바로 부딪히는
+것만 추립니다.
+
+- collect 와 별도 flow. `stores_collect` 안에서 부르지 않음. 합치면 enrich 실패
+  재시도가 사이트를 다시 긁음. 순서는 cron 시각(04:00 / 05:00 KST)으로 맞춤
+- 무엇을 읽을지는 `manifest.read_cycle` 이 정함. enrich 가 따로 정하지 않음
+- `EnrichedStore` 의 필드 순서가 CSV 열이자 COPY 열이자 DDL 순서. 필드를 더하면
+  `table._ddl` 도 같은 자리에 넣어야 함. 한쪽만 고치면 값이 엉뚱한 컬럼에 들어감
+- 주소 문자열을 해석하지 않음. 계층은 `b_code` 자리수에, 이름은 `tb_legal_dong` 에
+  있음. 시군구 비교는 경고용 느슨한 토큰 비교 하나뿐. 인천 개편 뒤 사이트 주소가
+  옛 구 이름이라 인천 20여 건이 늘 경고로 뜨는데 코드는 맞음
+- Kakao 조회는 task 하나 안의 쓰레드. 지점마다 task 를 만들지 않음. 쓰레드 안에서
+  `get_run_logger` 를 부르지 않음 (컨텍스트가 따라가지 않음)
+- 색인 Job 은 `NEKI_BATCH_IMAGE` 가 있을 때만. 매니페스트는 `generateName` 이 아니라
+  `metadata.name` 이어야 함. prefect-kubernetes 가 이름으로 상태를 읽음
+- `prefect-kubernetes` 버전은 Dockerfile 베이스와 같아야 함. 다르면 이미지 안의
+  것이 교체됨
+- BACKEND-65 가 `searchIndexJob` 을 넣기 전까지 deployment 파라미터
+  `run_index=False`. 들어오면 그 줄을 지움
 
 ## 마스터 데이터 (법정동, 지하철 역)
 
@@ -618,6 +647,7 @@ make harufilm
 make photolabplus
 make broomstudio
 make collect
+make enrich
 make s3-ls
 make subway-station
 make legal-dong
@@ -632,6 +662,19 @@ make legal-dong
 
 `normalize.py`를 건드렸다면 실행 로그의 "역명 접미사 제거"가 359, "노선명 표기
 통일"이 66에서 움직이지 않는지, "시도를 채우지 못한 역" 경고가 없는지 봐야 합니다.
+
+`enrich` 는 `make collect` 뒤에 돕니다. 판정을 건드렸다면 두 번 돌려 첫 실행이
+`ok`, 둘째가 `reused` 인지, `KAKAO_API_KEY` 를 비우고도 완주하는지 봅니다. 적재를
+건드렸다면 테이블이 없는 상태부터 확인하고 두 번 돌려 `tb_photo_booth_enriched`
+와 `_prev` 가 같은 건수인지, 인덱스 이름의 번호가 `1` 을 넘지 않는지 봅니다. 색인
+단계는 로컬에서 `NEKI_BATCH_IMAGE` 가 없어 경고 후 건너뛰는 것이 정상입니다.
+
+```bash
+psql -c 'DROP TABLE IF EXISTS tb_photo_booth_enriched, tb_photo_booth_enriched_prev'
+make enrich
+make enrich
+psql -c "select geocode_status, count(*) from tb_photo_booth_enriched group by 1"
+```
 
 `legal-dong`은 `DATABASE_URL`이 있어야 돕니다. 파싱과 정규화만 볼 때는
 `legal_dong(persist=False)`로 끄면 `DATABASE_URL` 없이도 됩니다.
