@@ -321,9 +321,14 @@ platform     브랜드
 target_date  대상 일자
 s3_path      s3://<버킷>/collect/platform=.../dt=.../<HHMMSS>.csv
 store_count  건수
-collected_at 적재 시각
+collected_at 적재 시각 (KST 벽시계, 시간대 없는 TIMESTAMP)
 flow_run_id  적재한 flow run
 ```
+
+`collected_at`은 앱 DB(Team-Neki-Server)의 다른 테이블처럼 시간대 없는 `TIMESTAMP`에
+KST 벽시계를 넣습니다. `TIMESTAMPTZ`로 두면 세션 시간대(운영 파드는 UTC)로 보여
+앱 쪽 테이블과 나란히 읽을 때 9시간이 어긋납니다. aware 값을 그대로 넣어도 세션
+시간대로 바뀌어 들어가므로 `put_manifest`가 시간대를 떼고 넣습니다.
 
 **실행할 때마다 행을 새로 쌓습니다. 덮어쓰지 않습니다.** 같은 사이클을 두 번
 돌리면 행이 둘이고 그 둘이 곧 이력입니다. S3의 CSV도 적재 시각 이름으로 전부

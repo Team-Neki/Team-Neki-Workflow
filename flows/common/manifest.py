@@ -94,7 +94,10 @@ CREATE TABLE IF NOT EXISTS {TABLE} (
     store_count  INTEGER      NOT NULL,
 
     -- 언제 받았나. target_date 와 갈릴 수 있다. 모듈 docstring 참고.
-    collected_at TIMESTAMPTZ  NOT NULL,
+    -- 앱 DB (Team-Neki-Server) 의 다른 테이블처럼 시간대 없는 TIMESTAMP 에 KST
+    -- 벽시계를 넣는다. TIMESTAMPTZ 로 두면 세션 시간대(운영 파드는 UTC)로 보여
+    -- 앱 쪽 테이블과 나란히 읽을 때 9시간이 어긋난다.
+    collected_at TIMESTAMP    NOT NULL,
 
     -- 적재물에서 실행 로그로 되짚어 가는 고리. 서버 없이 도는 로컬 실행에는
     -- run 이 없을 수 있어 NULL 을 허용한다.
@@ -119,7 +122,7 @@ COMMENT ON COLUMN {TABLE}.platform IS '수집 브랜드 (flows.common.platform.P
 COMMENT ON COLUMN {TABLE}.target_date IS '수집 사이클 일자(KST). 예약 시각 기준이라 늦게 집힌 run 은 collected_at 과 다르다';
 COMMENT ON COLUMN {TABLE}.s3_path IS 'CSV 전체 경로 (s3://<버킷>/collect/platform=.../dt=.../<HHMMSS>.csv)';
 COMMENT ON COLUMN {TABLE}.store_count IS 'CSV 레코드 수. 읽는 쪽이 실제 건수와 대조한다';
-COMMENT ON COLUMN {TABLE}.collected_at IS '적재 시각(KST). CSV 파일명과 같은 시각';
+COMMENT ON COLUMN {TABLE}.collected_at IS '적재 시각(KST 벽시계, 시간대 없음). CSV 파일명과 같은 시각';
 COMMENT ON COLUMN {TABLE}.flow_run_id IS '적재한 Prefect flow run';
 """
 
@@ -175,6 +178,9 @@ def put_manifest(
 
     테이블은 호출부가 `ensure_table()` 로 먼저 마련한다. 여기서 만들면 본문을
     올린 뒤에야 DB 에 처음 닿게 되어, DB 가 죽어 있을 때 행 없는 CSV 만 쌓인다.
+
+    collected_at 은 시간대를 떼고 KST 벽시계로 넣는다. aware 값을 그대로 넣으면
+    Postgres 가 세션 시간대로 바꿔 TIMESTAMP 에 담으므로 운영에서는 UTC 가 들어간다.
     """
     with connect() as connection:
         with connection.cursor() as cursor:
@@ -185,7 +191,7 @@ def put_manifest(
                     target_date,
                     s3_path,
                     store_count,
-                    collected_at,
+                    collected_at.astimezone(KST).replace(tzinfo=None),
                     flow_run_id,
                 ),
             )
