@@ -105,14 +105,14 @@ s3://<bucket>/
 - raw 객체에 태그 `kind=raw`. lifecycle 은 prefix 나 태그로만 걸리는데 raw 가
   파티션 안에 있어 prefix 로는 못 잡음. 코드는 지우지 않음
 
-구현 : `flows/common/storage.py:67` `COLLECT_PREFIX`,
-`flows/common/storage.py:71` `RAW_DIR`,
-`flows/common/storage.py:73` `RUN_AT_FORMAT`,
-`flows/common/storage.py:112` `def partition`,
-`flows/common/storage.py:162` `def put_stores`,
-`flows/common/storage.py:231` `def put_raw`,
-`flows/common/storage.py:130` `def _content_type`,
-`flows/common/storage.py:261` `Tagging="kind=raw"`
+구현 : `flows/common/storage.py:68` `COLLECT_PREFIX`,
+`flows/common/storage.py:75` `RAW_DIR`,
+`flows/common/storage.py:77` `RUN_AT_FORMAT`,
+`flows/common/storage.py:116` `def partition`,
+`flows/common/storage.py:166` `def put_stores`,
+`flows/common/storage.py:235` `def put_raw`,
+`flows/common/storage.py:134` `def _content_type`,
+`flows/common/storage.py:265` `Tagging="kind=raw"`
 
 ### CSV 계약
 
@@ -126,10 +126,10 @@ CSV 에는 타입도 null 도 없습니다. 수집 단계는 값이 없을 때 �
 `\n` 입니다. 기본값인 CRLF 로 두면 Postgres `COPY` 가 마지막 열에 `\r` 을 붙여
 읽습니다.
 
-구현 : `flows/common/storage.py:77` `COLUMNS`,
-`flows/common/storage.py:90` `FLOAT_COLUMNS`,
-`flows/common/storage.py:148` `def _record`,
-`flows/common/storage.py:266` `def _restore`
+구현 : `flows/common/storage.py:81` `COLUMNS`,
+`flows/common/storage.py:94` `FLOAT_COLUMNS`,
+`flows/common/storage.py:152` `def _record`,
+`flows/common/storage.py:270` `def _restore`
 
 ## 산출물 : manifest 테이블
 
@@ -186,7 +186,7 @@ DB 에 닿는지는 본문을 올리기 전에 확인하고, 행은 본문을 �
 - `DATABASE_URL` 이 없으면 수집 flow 는 시작 직후 실패함. `persist=False` 로 끄면 DB
   없이 파싱만 볼 수 있음
 
-구현 : `flows/common/storage.py:162` `def put_stores`,
+구현 : `flows/common/storage.py:166` `def put_stores`,
 `flows/common/postgres.py:39` `def connect`
 
 ## 대상 일자와 실행 시각
@@ -221,7 +221,7 @@ DB 에 닿는지는 본문을 올리기 전에 확인하고, 행은 본문을 �
 `flows/stores_collect/flow.py:138` `cycle = target_date()`,
 `flows/stores_collect/flow.py:144` `target_date=cycle`,
 `flows/photoism_stores/flow.py:28` `target_date: date | None = None`,
-`flows/common/storage.py:117` `def run_at`
+`flows/common/storage.py:121` `def run_at`
 
 ## 실패한 브랜드는 무엇으로 대신하나
 
@@ -300,8 +300,8 @@ GitOps 의 k8s Secret `prefect-workflow` 가 flow run Job 파드에 넣습니다
 차이가 환경변수 하나여야 코드에 분기가 생기지 않습니다.
 
 구현 : `flows/common/kakao.py:41` `def api_key`,
-`flows/common/storage.py:97` `def _bucket`,
-`flows/common/storage.py:107` `def _client`
+`flows/common/storage.py:101` `def _bucket`,
+`flows/common/storage.py:111` `def _client`
 
 ## 읽는 쪽 계약 (enrich, index)
 
@@ -316,8 +316,8 @@ enrich 와 index 는 아직 없습니다. 만들 때 지킬 계약은 셋입니�
   기록이 어긋남
 
 구현 : `flows/common/manifest.py:240` `def read_cycle`,
-`flows/common/storage.py:279` `def read_stores`,
-`flows/common/storage.py:136` `def _split_uri`
+`flows/common/storage.py:283` `def read_stores`,
+`flows/common/storage.py:140` `def _split_uri`
 
 ### Athena 를 붙이려면
 

@@ -5,10 +5,11 @@ boto3 기본 자격증명 체인만 쓴다. endpoint나 프로파일을 코드�
 k8s Secret 이 넣는 자격증명이 실제 S3를 가리킨다. 이관은 환경변수 교체로 끝나며
 코드는 바뀌지 않는다.
 
-레이아웃은 이것 하나다.
+레이아웃은 collect 와 enrich 둘이다.
 
     collect/platform=<브랜드>/dt=<대상 일자>/<실행 시각>.csv
     collect/platform=<브랜드>/dt=<대상 일자>/_raw/<실행 시각>/<이름>
+    enrich/dt=<사이클>/<실행 시각>.csv
 
 사람이 콘솔에서 읽는 것과 Athena 를 붙이는 것을 둘 다 만족하도록 잡았다.
 
@@ -65,6 +66,9 @@ from flows.common.platform import Platform
 BUCKET_ENV = "S3_BUCKET"
 
 COLLECT_PREFIX = "collect"
+
+# enrich 결과. 브랜드 11개가 한 파티션이라 platform= 이 없다.
+ENRICH_PREFIX = "enrich"
 
 # 원문이 들어가는 폴더. `_` 로 시작해야 Athena 가 무시한다. 이름을 바꾸면 그
 # 성질이 사라진다.
@@ -303,3 +307,49 @@ def read_stores(*, platform: Platform, target_date: date) -> list[dict[str, Any]
         )
 
     return records
+
+
+def enrich_partition(target_date: date) -> str:
+    """enrich 파티션. 끝에 슬래시를 붙이지 않는다."""
+    return f"{ENRICH_PREFIX}/dt={target_date:%Y-%m-%d}"
+
+
+@task(retries=3, retry_delay_seconds=[2, 5, 10])
+def put_enriched(
+    rows: list[Any], *, columns: tuple[str, ...], target_date: date
+) -> str:
+    """enrich 결과를 사이클 파티션에 CSV 로 남긴다.
+
+    manifest 행을 남기지 않는다. index 는 S3 가 아니라 Postgres 의 현재 세대를
+    읽고, S3 는 이력과 재실행 원천이다. 파티션 안에서 파일명이 실행 시각이라
+    가장 나중 파일이 곧 그 사이클의 마지막 실행이다.
+
+    열 목록은 호출부가 준다. 이 모듈은 collect 의 스키마만 알고 enrich 의
+    스키마는 flows/stores_enrich/region.py 가 정본이다. 날짜와 시각은 ISO 로
+    쓴다. datetime 은 date 의 하위 타입이라 isinstance 하나로 둘 다 걸린다.
+    """
+    logger = get_run_logger()
+    bucket = _bucket()
+
+    buffer = io.StringIO()
+    writer = csv.DictWriter(buffer, fieldnames=columns, lineterminator="\n")
+    writer.writeheader()
+    for row in rows:
+        fields = asdict(row) if is_dataclass(row) else dict(row)
+        writer.writerow(
+            {
+                key: value.isoformat() if isinstance(value, date) else value
+                for key, value in fields.items()
+            }
+        )
+
+    key = f"{enrich_partition(target_date)}/{run_at()}.csv"
+    uri = f"s3://{bucket}/{key}"
+    _client().put_object(
+        Bucket=bucket,
+        Key=key,
+        Body=buffer.getvalue().encode("utf-8"),
+        ContentType=_content_type(key),
+    )
+    logger.info("%s 에 %d건 적재 (사이클 %s)", uri, len(rows), f"{target_date:%Y-%m-%d}")
+    return uri
