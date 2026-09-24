@@ -134,7 +134,7 @@ from flows.common.kakao import coord2regioncode
 d = coord2regioncode(127.0276, 37.4979)
 print(d['code'], d['region_1depth_name'], d['region_2depth_name'], d['region_3depth_name'])"
 ```
-Expected: `1168010100 서울특별시 강남구 역삼동`
+Expected: `1165010800 서울특별시 서초구 서초동` (강남역 사거리는 서초동이다)
 
 - [ ] **Step 4: Commit**
 
@@ -1422,7 +1422,7 @@ select tablename, indexname from pg_indexes where tablename like 'tb_photo_booth
 select platform, source_dt, count(*) from tb_photo_booth_enriched group by 1, 2 order by 1;
 select platform, name, address, b_code, region_2depth_name from tb_photo_booth_enriched where b_code is null limit 20;"
 ```
-Expected: `enrich/dt=<오늘>/` 에 CSV 둘. 두 테이블이 같은 건수. 인덱스 이름에 `1` 같은 번호가 붙지 않음(`_b_code_idx` 로 끝남). `source_dt` 가 브랜드마다 오늘. `b_code` NULL 행이 있으면 주소를 보고 좌표가 바다나 해외가 아닌지 확인.
+Expected: `enrich/dt=<오늘>/` 에 CSV 둘. 두 테이블이 같은 건수. 인덱스 이름은 같은 날 재실행이라 한쪽이 `_b_code_idx1` 이고 다음 실행에 `_b_code_idx` 로 돌아온다. `2` 이상이 보이면 `_prev` 정리가 빠진 것. `source_dt` 가 브랜드마다 오늘. `b_code` NULL 행이 있으면 주소를 보고 좌표가 바다나 해외가 아닌지 확인. 시군구 불일치 경고는 인천 개편(옛 구 이름 주소) 때문에 20여 건이 정상으로 뜬다.
 
 - [ ] **Step 5: 키 없이 완주하는지**
 
