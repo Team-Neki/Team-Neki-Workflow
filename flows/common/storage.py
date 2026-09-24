@@ -2,38 +2,52 @@
 
 boto3 기본 자격증명 체인만 쓴다. endpoint나 프로파일을 코드에서 정하지 않는다.
 로컬은 `aws/config`의 `neki-local` 프로파일이 LocalStack을 가리키고, 운영은
-worker의 IAM role이 실제 S3를 가리킨다. 이관은 프로파일 교체로 끝나며 코드는
-바뀌지 않는다.
+k8s Secret 이 넣는 자격증명이 실제 S3를 가리킨다. 이관은 환경변수 교체로 끝나며
+코드는 바뀌지 않는다.
 
-레이아웃은 다음과 같다.
+레이아웃은 이것 하나다.
 
-    raw/     platform=<브랜드>/dt=<날짜>/<이름>.gz
-    collect/ platform=<브랜드>/dt=<날짜>/<HHMMSS>.csv
-    runs/    dt=<날짜>/collect.json
+    collect/platform=<브랜드>/dt=<대상 일자>/<실행 시각>.csv
+    collect/platform=<브랜드>/dt=<대상 일자>/_raw/<실행 시각>/<이름>
 
-`dt=` Hive 파티션이라 이후 Glue나 Athena를 그대로 붙일 수 있다. 포맷은 헤더
-있는 CSV다. 다음 단계가 Postgres COPY로 그대로 받고, 사람이 볼 때도 S3 콘솔과
-스프레드시트에서 바로 열린다. 스키마가 아직 흔들리고 있어 Parquet은 이르다.
+사람이 콘솔에서 읽는 것과 Athena 를 붙이는 것을 둘 다 만족하도록 잡았다.
 
-collect는 압축하지 않는다. 하루 전량이 수백 KB라 줄여서 얻는 것이 없고,
-압축하면 바로 열린다는 이점이 사라진다. raw/는 HTML 원문이라 gzip으로 둔다.
+- 브랜드가 위다. 브랜드 폴더를 열면 `dt=` 가 이력 순으로 나열되고, 실패한 날은
+  폴더가 없어 마지막 폴더가 곧 대신 쓰이는 것이다. 대신하기(stores_collect)가
+  브랜드 이력을 읽는 흐름과 같다
+- CSV 와 그것을 만든 원문(raw)이 같은 파티션에 있고 실행 시각으로 짝이 맞는다.
+  다른 prefix 로 건너갈 일이 없다
+- `_raw/` 는 Hive 와 Trino(Athena)가 `_` 나 `.` 로 시작하는 폴더와 파일을
+  무시하는 규칙을 쓴 것이다. `collect/` 를 테이블로 잡으면 CSV 만 읽힌다.
+  같은 날 재실행으로 CSV 가 둘이면 `max("$path") OVER (PARTITION BY platform, dt)`
+  뷰로 최신만 남긴다
+- `dt=` 는 적재일이 아니라 대상 일자(target_date)다. 늦게 집힌 월요일 run 은
+  월요일 폴더에 들어가고 파일명이 실제 시각을 말한다. Athena 가 사이클로
+  파티션을 건너뛰려면 파티션이 사이클이어야 한다
 
-CSV 파일명은 적재 시각(KST)이다. 같은 날 다시 돌리면 파일이 하나 더 생기고
-이전 것은 남는다. **어느 파일이 현재인지는 S3 가 아니라 Postgres 가 안다.**
-`flows/common/manifest.py` 의 `tb_store_collect_manifest` 가 적재 한 번마다 한
-행으로 경로와 건수를 들고 있고, 읽는 쪽은 그 사이클의 마지막 행을 따라간다.
-파일과 행이 1:1 로 쌓이므로 재실행 이력이 양쪽에 같은 모양으로 남는다.
-파티션 안에 `_manifest.json` 을 두지 않으므로 `collect/` 에는 Hive 파티션과
-CSV 만 남는다.
+실행 시각은 `YYYY-MM-DD_HHMMSS`(KST)로 브랜드 flow run 의 시작 시각이다. CSV 와
+raw 가 같은 값을 쓰므로 어느 원문이 어느 CSV 를 만들었는지 대조할 필요가 없다.
+같은 날 다시 돌리면 CSV 도 raw 폴더도 하나 더 생기고 이전 것은 남는다.
+
+어느 CSV 가 현재인지는 S3 가 아니라 Postgres 의 `tb_store_collect_manifest` 행이
+가리킨다(`flows/common/manifest.py`). 읽는 쪽은 그 행의 `s3_path` 만 따라간다.
+실행 하나의 요약(어느 브랜드가 성공하고 무엇으로 대신했나)은 S3 에 남기지 않는다.
+실패 사유는 Prefect 로그에 있고, 무엇을 읽을지는 `manifest.read_cycle` 이 테이블에서
+읽는 시점에 계산한다.
+
+압축하지 않는다. collect 는 하루 전량이 수백 KB, raw 는 압축을 풀어도 5MB 안팎이라
+줄여서 얻는 것이 없고, gzip 이면 콘솔에서 바로 열리지 않는다. 대신 Content-Type 을
+넣어 콘솔의 "열기"가 브라우저에서 바로 보여주게 한다. raw 객체에는 `kind=raw`
+태그를 달아 둔다. S3 lifecycle 은 prefix 나 태그로만 걸리는데 raw 가 파티션 안에
+있어 prefix 로는 못 잡기 때문이다.
 
 CSV는 타입이 없어 읽는 쪽이 되돌려야 한다. 열 목록이 곧 계약이므로 `COLUMNS`가
 정본이고, 여기 없는 필드를 적재하면 `DictWriter`가 막는다.
 """
 
 import csv
-import gzip
 import io
-import json
+import mimetypes
 import os
 from dataclasses import asdict, is_dataclass
 from datetime import date, datetime, timedelta, timezone
@@ -41,6 +55,7 @@ from typing import Any
 
 import boto3
 from prefect import get_run_logger, task
+from prefect.context import FlowRunContext
 from prefect.runtime import flow_run
 
 from flows.common.manifest import ensure_table, put_manifest, read_manifest
@@ -49,17 +64,13 @@ from flows.common.platform import Platform
 
 BUCKET_ENV = "S3_BUCKET"
 
-RAW_PREFIX = "raw"
 COLLECT_PREFIX = "collect"
 
-# 실행 하나를 설명하는 manifest. collect/ 안에 두지 않는다. 그쪽은 Hive 파티션만
-# 있어야 나중에 Glue 를 그대로 붙일 수 있고, 다른 것이 섞이면 파티션 인식이
-# 깨진다. 브랜드마다의 적재 위치와 달리 `brands` 가 중첩 구조라 표로 펼칠 수
-# 없어 테이블로 옮기지 않고 JSON 으로 남긴다.
-RUNS_PREFIX = "runs"
+# 원문이 들어가는 폴더. `_` 로 시작해야 Athena 가 무시한다. 이름을 바꾸면 그
+# 성질이 사라진다.
+RAW_DIR = "_raw"
 
-STORES_NAME_FORMAT = "%H%M%S.csv"
-RUN_MANIFEST_NAME = "collect.json"
+RUN_AT_FORMAT = "%Y-%m-%d_%H%M%S"
 
 # CSV 열 순서. 적재물의 스키마 계약이라 CollectedStore에 필드를 더하면 여기에도
 # 넣어야 한다. 빠뜨리면 조용히 누락되지 않고 DictWriter가 ValueError로 막는다.
@@ -98,13 +109,28 @@ def _client():
     return boto3.Session().client("s3")
 
 
-def today() -> date:
-    return datetime.now(KST).date()
-
-
-def partition(prefix: str, *, platform: Platform, dt: date) -> str:
+def partition(platform: Platform, target_date: date) -> str:
     """파티션 경로. 끝에 슬래시를 붙이지 않는다."""
-    return f"{prefix}/platform={platform}/dt={dt:%Y-%m-%d}"
+    return f"{COLLECT_PREFIX}/platform={platform}/dt={target_date:%Y-%m-%d}"
+
+
+def run_at() -> str:
+    """이번 실행의 시각. 감싼 flow run 의 시작 시각(KST)이다.
+
+    task 안에서 불러도 감싼 flow run 을 본다. CSV 와 raw 가 같은 값을 쓰려면
+    적재 시점의 now() 가 아니라 run 에 박힌 시각이어야 한다. 재시도도 같은
+    이름을 다시 쓰므로 실패한 시도의 파일이 따로 남지 않는다. flow run 밖이면
+    지금이다.
+    """
+    context = FlowRunContext.get()
+    started = context.flow_run.start_time if context else None
+    return (started or datetime.now(KST)).astimezone(KST).strftime(RUN_AT_FORMAT)
+
+
+def _content_type(name: str) -> str:
+    """콘솔의 "열기"가 브라우저에서 바로 보여주도록 확장자로 정한다."""
+    guessed = mimetypes.guess_type(name)[0] or "text/plain"
+    return f"{guessed}; charset=utf-8" if guessed.startswith("text/") else guessed
 
 
 def _split_uri(uri: str) -> tuple[str, str]:
@@ -137,17 +163,14 @@ def put_stores(
     stores: list[Any],
     *,
     platform: Platform,
-    dt: date | None = None,
     target_date: date | None = None,
 ) -> str:
     """수집 결과를 collect 파티션에 적재하고 manifest 행을 남긴다.
 
-    `dt` 는 파티션 날짜, 즉 우리가 언제 받았는지다. `target_date` 는 이 적재물이
-    어느 수집 사이클의 것인지이며 manifest 의 키가 된다. 둘은 보통 같고, 예약된
-    run 이 늦게 집혔을 때만 갈린다. 자세한 것은 `flows/common/manifest.py` 에
-    남겼다.
+    `target_date` 는 이 적재물이 어느 수집 사이클의 것인지이며 파티션과 manifest
+    의 키가 된다. 비우면 감싼 flow run 에서 읽는다(`manifest.target_date`).
 
-    파일명이 적재 시각이라 같은 날 다시 실행해도 이전 CSV를 덮어쓰지 않고,
+    파일명이 실행 시각이라 같은 날 다시 실행해도 이전 CSV를 덮어쓰지 않고,
     manifest 도 행을 하나 더 쌓는다. 읽는 쪽은 사이클의 마지막 행이 가리키는
     `s3_path` 를 따라가므로 언제 읽어도 완결된 실행 하나를 본다.
 
@@ -155,17 +178,15 @@ def put_stores(
     데이터가 없는 창이 생겨 다음 단계가 없는 파일을 읽으러 간다.
 
     다만 DB 가 닿는지는 올리기 전에 확인한다. 이 task 는 재시도가 셋이라
-    manifest 쪽에서 처음 막히면 행 없는 CSV 가 파티션에 네 개 쌓인다.
+    manifest 쪽에서 처음 막히면 행 없는 CSV 가 파티션에 남는다.
     """
     logger = get_run_logger()
 
-    dt = dt or today()
     target_date = target_date or cycle_date()
     collected_at = datetime.now(KST)
 
     bucket = _bucket()
     client = _client()
-    base = partition(COLLECT_PREFIX, platform=platform, dt=dt)
 
     # 적재물을 올리기 전에 부른다. DATABASE_URL 이 없거나 DB 가 죽어 있으면
     # 여기서 끝나므로 가리킬 행이 없는 CSV 를 남기지 않는다.
@@ -180,10 +201,10 @@ def put_stores(
         writer.writerow(_record(store, collected_at=collected_at))
 
     body = buffer.getvalue().encode("utf-8")
-    name = collected_at.strftime(STORES_NAME_FORMAT)
-    uri = f"s3://{bucket}/{base}/{name}"
+    key = f"{partition(platform, target_date)}/{run_at()}.csv"
+    uri = f"s3://{bucket}/{key}"
 
-    client.put_object(Bucket=bucket, Key=f"{base}/{name}", Body=body)
+    client.put_object(Bucket=bucket, Key=key, Body=body, ContentType=_content_type(key))
 
     manifest_id = put_manifest(
         platform=platform,
@@ -212,82 +233,34 @@ def put_raw(
     *,
     platform: Platform,
     name: str,
-    dt: date | None = None,
+    target_date: date | None = None,
 ) -> str:
-    """응답 원문을 raw 파티션에 남긴다.
+    """응답 원문을 CSV 와 같은 파티션의 `_raw/<실행 시각>/` 에 남긴다.
 
     파싱이 조용히 깨졌을 때 소급해서 고치기 위한 것이다. 포토시그니처처럼
     정규식으로 마크업을 긁는 경우 사이트가 조금만 바뀌어도 결과가 0건이 되는데,
     원문이 있으면 사이트를 다시 긁지 않고 파서만 고쳐 재생성할 수 있다.
 
-    보존은 S3 lifecycle에 맡긴다. 코드가 지우지 않는다.
+    수집기 깊숙이서 불리므로 `target_date` 를 인자로 받을 길이 없다. 비우면
+    감싼 브랜드 flow run 의 `target_date` 파라미터를 읽어 CSV 와 같은 파티션에
+    들어간다(`manifest.target_date`).
+
+    보존은 S3 lifecycle에 맡긴다. 코드가 지우지 않는다. `kind=raw` 태그가
+    lifecycle 의 손잡이다.
     """
-    dt = dt or today()
-
-    bucket = _bucket()
-    base = partition(RAW_PREFIX, platform=platform, dt=dt)
-    key = f"{base}/{name}.gz"
-
-    _client().put_object(
-        Bucket=bucket, Key=key, Body=gzip.compress(content.encode("utf-8"))
-    )
-    return f"s3://{bucket}/{key}"
-
-
-@task(retries=3, retry_delay_seconds=[2, 5, 10])
-def put_run_manifest(
-    brands: dict[str, dict[str, Any]], *, target_date: date | None = None
-) -> str:
-    """수집 실행 하나를 설명하는 manifest 를 남긴다.
-
-    브랜드 하나가 실패해도 나머지는 적재하므로, 다음 단계는 "이 사이클에 무엇이
-    쓸 수 있는가"를 알아야 한다. 브랜드별 manifest 행으로는 답할 수 없다.
-    없는 행은 없다는 사실 자체가 기록되지 않기 때문이다.
-
-    파티션을 `target_date` 로 끊는다. 브랜드별 manifest 와 같은 사이클을 가리켜야
-    다음 단계가 둘을 맞붙일 수 있다.
-    """
-    logger = get_run_logger()
-
     target_date = target_date or cycle_date()
+
     bucket = _bucket()
-    key = f"{RUNS_PREFIX}/dt={target_date:%Y-%m-%d}/{RUN_MANIFEST_NAME}"
-
-    succeeded = sorted(k for k, v in brands.items() if v.get("status") == "ok")
-    stale = sorted(k for k, v in brands.items() if v.get("status") == "stale")
-    failed = sorted(k for k, v in brands.items() if v.get("status") == "failed")
-
-    manifest = {
-        "target_date": f"{target_date:%Y-%m-%d}",
-        "finished_at": datetime.now(KST).isoformat(),
-        "flow_run_id": flow_run.id,
-        "succeeded": succeeded,
-        # 이번 사이클 수집은 실패했지만 이전 것으로 대신하는 브랜드다. 다음
-        # 단계는 이들도 처리하되 데이터가 오래됐음을 알아야 한다.
-        "stale": stale,
-        # 대신할 것조차 없는 브랜드다. 다음 단계가 다룰 수 없다.
-        "failed": failed,
-        "total": sum(v.get("count") or 0 for v in brands.values()),
-        # 브랜드마다 manifest 테이블의 어느 사이클 행을 읽어야 하는지 담는다.
-        # 다음 단계는 이것만 보면 되고 신선한지 여부를 따로 판단할 필요가 없다.
-        "brands": brands,
-    }
+    key = f"{partition(platform, target_date)}/{RAW_DIR}/{run_at()}/{name}"
 
     _client().put_object(
         Bucket=bucket,
         Key=key,
-        Body=json.dumps(manifest, ensure_ascii=False, indent=2).encode("utf-8"),
+        Body=content.encode("utf-8"),
+        ContentType=_content_type(name),
+        Tagging="kind=raw",
     )
-
-    logger.info("s3://%s/%s 기록 (성공 %d, 실패 %d)", bucket, key, len(succeeded), len(failed))
     return f"s3://{bucket}/{key}"
-
-
-def read_run_manifest(target_date: date) -> dict[str, Any]:
-    """수집 실행 manifest 를 읽는다. enrich 가 무엇을 처리할지 여기서 정한다."""
-    key = f"{RUNS_PREFIX}/dt={target_date:%Y-%m-%d}/{RUN_MANIFEST_NAME}"
-    body = _client().get_object(Bucket=_bucket(), Key=key)["Body"].read()
-    return json.loads(body)
 
 
 def _restore(row: dict[str, str]) -> dict[str, Any]:
