@@ -21,6 +21,11 @@ ANCHOR = re.compile(r"`([^`:\s]+):(\d+)` `([^`]+)`")
 
 
 def check(spec: Path) -> list[str]:
+    """문서 하나의 anchor 를 전부 확인하고 어긋난 것을 메시지로 돌려준다.
+
+    빈 목록이면 전부 맞는 것이다. 심볼이 그 줄에 없으면 파일 안에서 처음 나오는
+    줄을 같이 알려줘 줄 번호만 고치면 되는지 바로 보이게 한다.
+    """
     errors: list[str] = []
     anchors = ANCHOR.findall(spec.read_text(encoding="utf-8"))
     if not anchors:
@@ -44,6 +49,7 @@ def check(spec: Path) -> list[str]:
 
 
 def main() -> int:
+    """docs/spec 의 모든 문서를 확인하고 exit code 를 돌려준다. 0 이면 전부 일치."""
     specs = sorted(SPEC_DIR.glob("*.md"))
     if not specs:
         print(f"{SPEC_DIR} 에 문서가 없습니다", file=sys.stderr)
