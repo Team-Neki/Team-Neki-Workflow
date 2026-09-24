@@ -1,7 +1,7 @@
 """법정동 코드 수집 deployment.
 
 매월 1일 05:00 KST 에 돈다. Prefect cron 은 timezone 을 주지 않으면 UTC 라 명시한다.
-stores-collect 는 04:00 UTC(13:00 KST) 라 겹치지 않는다.
+stores-collect 가 04:00 KST 라 한 시간 뒤에 둔다.
 
 **개편은 대개 1일에 시행되는데 원본이 그날 바로 갱신되지는 않는다.** 시행일 새벽에
 받으면 아직 옛 스냅샷일 수 있고, 그러면 그 개편은 다음 달 1일에야 들어온다.
