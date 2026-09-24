@@ -39,12 +39,13 @@ help: ## 명령 목록을 출력한다
 setup: ## 의존성을 uv.lock 기준으로 설치한다
 	$(UV) sync
 
-check: spec-check ## 임포트와 deployment 수집, spec anchor 를 확인한다
+check: spec-check ## 임포트와 deployment 수집, spec anchor, 단위 테스트를 확인한다
 	@$(UV) run python -c "\
 	from deployments import collect; \
 	found = list(collect()); \
 	print('deployment', len(found), '건'); \
 	[print('  ', d.flow_name + '/' + d.name) for d in found]"
+	@$(UV) run pytest -q tests
 
 # docs/spec 이 정본이다. anchor 가 어긋나면 문서나 코드 중 하나가 낡은 것이다.
 spec-check: ## docs/spec 의 구현 anchor 가 코드 줄과 맞는지 확인한다
