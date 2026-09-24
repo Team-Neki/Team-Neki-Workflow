@@ -14,7 +14,12 @@ from typing import Any, Callable
 from prefect import flow, get_run_logger
 
 from flows.broomstudio_stores import broomstudio_stores
-from flows.common.manifest import latest_manifest, read_manifest, target_date
+from flows.common.manifest import (
+    ensure_table,
+    latest_manifest,
+    read_manifest,
+    target_date,
+)
 from flows.common.platform import Platform
 from flows.common.storage import put_run_manifest
 from flows.dontlxxkup_stores import dontlxxkup_stores
@@ -58,6 +63,11 @@ def _fill_from_previous(
     대신 run manifest 가 브랜드마다 어느 사이클 행을 읽을지 가리킨다.
     """
     logger = get_run_logger()
+
+    # 브랜드가 전부 실패하면 put_stores 가 한 번도 돌지 않아 테이블이 없을 수
+    # 있다. 그대로 조회하면 UndefinedTable 이 나서 "쓸 수 있는 브랜드가 없다"는
+    # 진짜 이유가 가려진다.
+    ensure_table()
 
     for name, result in results.items():
         platform = Platform(name)

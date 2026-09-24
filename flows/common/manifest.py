@@ -172,9 +172,10 @@ def put_manifest(
 
     덮어쓰지 않는다. 같은 사이클을 다시 돌리면 행이 하나 더 쌓이고 이전 행은
     그대로 남아 이력이 된다.
-    """
-    ensure_table()
 
+    테이블은 호출부가 `ensure_table()` 로 먼저 마련한다. 여기서 만들면 본문을
+    올린 뒤에야 DB 에 처음 닿게 되어, DB 가 죽어 있을 때 행 없는 CSV 만 쌓인다.
+    """
     with connect() as connection:
         with connection.cursor() as cursor:
             cursor.execute(
@@ -252,4 +253,6 @@ def read_cycle(target_date: date) -> dict[str, dict[str, Any]]:
                 "ORDER BY platform, id DESC",
                 (target_date,),
             )
-            return {row[1]: _row(row) for row in cursor.fetchall()}
+            rows = [dict(zip(READ_COLUMNS, values)) for values in cursor.fetchall()]
+
+    return {row["platform"]: row for row in rows}

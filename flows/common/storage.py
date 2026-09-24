@@ -43,7 +43,7 @@ import boto3
 from prefect import get_run_logger, task
 from prefect.runtime import flow_run
 
-from flows.common.manifest import put_manifest, read_manifest
+from flows.common.manifest import ensure_table, put_manifest, read_manifest
 from flows.common.manifest import target_date as cycle_date
 from flows.common.platform import Platform
 
@@ -153,6 +153,9 @@ def put_stores(
 
     본문을 먼저 올리고 manifest 를 나중에 쓴다. 순서가 뒤집히면 manifest 만 있고
     데이터가 없는 창이 생겨 다음 단계가 없는 파일을 읽으러 간다.
+
+    다만 DB 가 닿는지는 올리기 전에 확인한다. 이 task 는 재시도가 셋이라
+    manifest 쪽에서 처음 막히면 행 없는 CSV 가 파티션에 네 개 쌓인다.
     """
     logger = get_run_logger()
 
@@ -163,6 +166,10 @@ def put_stores(
     bucket = _bucket()
     client = _client()
     base = partition(COLLECT_PREFIX, platform=platform, dt=dt)
+
+    # 적재물을 올리기 전에 부른다. DATABASE_URL 이 없거나 DB 가 죽어 있으면
+    # 여기서 끝나므로 가리킬 행이 없는 CSV 를 남기지 않는다.
+    ensure_table()
 
     buffer = io.StringIO()
     # lineterminator를 지정한다. 기본값이 CRLF라 그대로 두면 Postgres COPY가
