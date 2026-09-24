@@ -76,8 +76,8 @@ imweb 위젯은 범위를 벗어난 페이지가 빈 응답이 아니라 마지�
 구현 : `flows/stores_collect/flow.py:30` `BRANDS`,
 `flows/common/imweb_map.py:180` `def collect_board`,
 `flows/common/imweb_map.py:32` `MAX_PAGES`,
-`flows/common/kakao.py:124` `def search_all`,
-`flows/common/kakao.py:28` `MAX_EXPOSED`
+`flows/common/kakao.py:143` `def search_all`,
+`flows/common/kakao.py:29` `MAX_EXPOSED`
 
 ## 산출물 : S3
 
@@ -299,7 +299,7 @@ GitOps 의 k8s Secret `prefect-workflow` 가 flow run Job 파드에 넣습니다
 파드가 아닙니다. 코드에 endpoint 나 프로파일 분기를 두지 않습니다. 로컬과 운영의
 차이가 환경변수 하나여야 코드에 분기가 생기지 않습니다.
 
-구현 : `flows/common/kakao.py:40` `def api_key`,
+구현 : `flows/common/kakao.py:41` `def api_key`,
 `flows/common/storage.py:97` `def _bucket`,
 `flows/common/storage.py:107` `def _client`
 
