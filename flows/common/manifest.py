@@ -12,7 +12,7 @@
 ## 키
 
 실행할 때마다 행을 새로 쌓는다. 덮어쓰지 않으므로 같은 사이클을 두 번 돌리면
-행이 둘이고, 그 둘이 곧 이력이다. S3 의 CSV 도 적재 시각 이름으로 전부 남으므로
+행이 둘이고, 그 둘이 곧 이력이다. S3 의 CSV 도 실행 시각 이름으로 전부 남으므로
 행과 파일이 1:1 로 맞아 어느 실행이 무엇을 남겼는지 되짚을 수 있다.
 
 따라서 `(platform, target_date)` 는 유일하지 않아 키가 되지 못하고, PK 는 연번
@@ -48,15 +48,22 @@ flow 를 `ThreadPoolExecutor` 로 부르는데, 스레드를 건너면 Prefect �
 `target_date` 인자로 내려보내는 것이 유일하게 맞는 길이다.
 """
 
+from collections.abc import Iterable
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
+from prefect.context import FlowRunContext
 from prefect.runtime import flow_run
 
 from flows.common.platform import Platform
 from flows.common.postgres import connect
 
 TABLE = "tb_store_collect_manifest"
+
+# 이보다 오래된 적재물로는 대신하지 않는다. 무한정 대신하면 파서가 깨진 채로
+# 몇 주가 지나도 아무도 눈치채지 못한다. best effort 가 고장을 감추는 장치가
+# 되면 안 된다.
+MAX_STALE_DAYS = 7
 
 # 파티션 날짜와 같은 규칙이다. UTC 로 끊으면 새벽 실행이 전날 사이클로 들어간다.
 KST = timezone(timedelta(hours=9))
@@ -120,7 +127,7 @@ COMMENT ON TABLE {TABLE} IS '지점 수집(collect) 적재물의 위치. 적재 
 COMMENT ON COLUMN {TABLE}.id IS '적재 일련번호. 같은 (platform, target_date) 안에서 큰 값이 최신';
 COMMENT ON COLUMN {TABLE}.platform IS '수집 브랜드 (flows.common.platform.Platform)';
 COMMENT ON COLUMN {TABLE}.target_date IS '수집 사이클 일자(KST). 예약 시각 기준이라 늦게 집힌 run 은 collected_at 과 다르다';
-COMMENT ON COLUMN {TABLE}.s3_path IS 'CSV 전체 경로 (s3://<버킷>/collect/platform=.../dt=.../<HHMMSS>.csv)';
+COMMENT ON COLUMN {TABLE}.s3_path IS 'CSV 전체 경로 (s3://<버킷>/collect/platform=.../dt=.../<YYYY-MM-DD_HHMMSS>.csv)';
 COMMENT ON COLUMN {TABLE}.store_count IS 'CSV 레코드 수. 읽는 쪽이 실제 건수와 대조한다';
 COMMENT ON COLUMN {TABLE}.collected_at IS '적재 시각(KST 벽시계, 시간대 없음). CSV 파일명과 같은 시각';
 COMMENT ON COLUMN {TABLE}.flow_run_id IS '적재한 Prefect flow run';
@@ -139,11 +146,21 @@ _SELECT = f"SELECT {', '.join(READ_COLUMNS)} FROM {TABLE}"
 def target_date() -> date:
     """지금 도는 run 이 채우는 수집 사이클의 날짜.
 
-    flow run 이 없으면 Prefect 가 현재 시각을 돌려주므로 그대로 쓴다.
+    감싼 flow run 에 `target_date` 파라미터가 있으면 그것이다. `stores_collect`
+    가 브랜드 flow 로 내려보낸 값이며, 원문을 남기는 `put_raw` 는 수집기 깊숙이서
+    불려 인자로 받을 길이 없어 여기서 읽는다. 그래야 raw 가 CSV 와 같은 파티션에
+    들어간다.
+
+    없으면 flow run 의 예약 시각을 KST 로 끊는다. flow run 이 없으면 Prefect 가
+    현재 시각을 돌려주므로 그대로 쓴다.
 
     묶어 도는 flow 는 이 값을 한 번 정해 아래로 내려보내야 한다. 이유는 모듈
     docstring 에 남겼다.
     """
+    context = FlowRunContext.get()
+    given = context.parameters.get("target_date") if context else None
+    if given:
+        return given if isinstance(given, date) else date.fromisoformat(str(given))
     return flow_run.scheduled_start_time.astimezone(KST).date()
 
 
@@ -220,45 +237,69 @@ def read_manifest(platform: Platform, target_date: date) -> dict[str, Any] | Non
             return _row(cursor.fetchone())
 
 
-def latest_manifest(
-    platform: Platform, *, before: date | None = None
-) -> dict[str, Any] | None:
-    """브랜드의 가장 최근 적재를 읽는다. `before` 를 주면 그 이전 사이클만 본다.
+def read_cycle(
+    target_date: date,
+    *,
+    max_stale_days: int = MAX_STALE_DAYS,
+    platforms: Iterable[Platform] = Platform,
+) -> dict[str, dict[str, Any]]:
+    """사이클 하나에서 브랜드마다 무엇을 읽을지 정한다.
 
-    S3 파티션을 나열하지 않는다. 목록은 브랜드가 늘수록 호출이 따라 늘고,
-    manifest 가 테이블로 옮겨진 뒤로는 파티션이 있어도 행이 없을 수 있어
-    (적재 중간에 끊긴 경우) 목록과 기록이 어긋난다.
-    """
-    where = "WHERE platform = %s"
-    params: list[Any] = [str(platform)]
+    enrich 와 `stores_collect` 가 같이 쓴다. 규칙이 한 곳이어야 수집이 정한 것과
+    다음 단계가 보는 것이 어긋나지 않는다.
 
-    if before is not None:
-        where += " AND target_date < %s"
-        params.append(before)
+    브랜드마다 `target_date` 이하의 가장 최근 적재를 집고 며칠 지났는지로 상태를
+    매긴다. 결과는 platform 값을 키로 한다.
 
-    with connect() as connection:
-        with connection.cursor() as cursor:
-            cursor.execute(
-                f"{_SELECT} {where} ORDER BY target_date DESC, id DESC LIMIT 1",
-                params,
-            )
-            return _row(cursor.fetchone())
+        ok      이 사이클에 적재됨. manifest 가 그 행, age_days 0
+        stale   이전 사이클로 대신함. manifest 가 그 행, age_days 가 며칠 전인지
+        failed  max_stale_days 안에 쓸 것이 없음. manifest 는 None
 
+    실행 시점에 기록해 두지 않고 읽을 때 계산한다. 아침에 실패한 브랜드를 오후에
+    단독으로 다시 수집하면 기록은 아침 상태에 굳어 있지만 계산은 새 행을 바로
+    집는다. 쓰지 않기로 한 경우에도 `stale_target_date` 와 `age_days` 를 돌려줘
+    왜 버렸는지 남긴다.
 
-def read_cycle(target_date: date) -> dict[str, dict[str, Any]]:
-    """한 사이클의 브랜드별 최신 적재를 한 번에 읽는다. enrich 의 주 경로다.
-
-    브랜드마다 조회를 반복하지 않는다. `DISTINCT ON` 이 정렬 첫 열의 값마다 첫
-    행만 남기므로, `id` 내림차순으로 정렬해 두면 브랜드별 마지막 적재가 남는다.
+    S3 파티션을 나열하지 않는다. manifest 가 테이블로 옮겨진 뒤로는 파티션이
+    있어도 행이 없을 수 있어(적재 중간에 끊긴 경우) 목록과 기록이 어긋난다.
     """
     with connect() as connection:
         with connection.cursor() as cursor:
+            # DISTINCT ON 이 정렬 첫 열의 값마다 첫 행만 남기므로, 사이클과 id
+            # 내림차순이면 브랜드별 최신 적재가 남는다.
             cursor.execute(
                 f"SELECT DISTINCT ON (platform) {', '.join(READ_COLUMNS)} "
-                f"FROM {TABLE} WHERE target_date = %s "
-                "ORDER BY platform, id DESC",
+                f"FROM {TABLE} WHERE target_date <= %s "
+                "ORDER BY platform, target_date DESC, id DESC",
                 (target_date,),
             )
-            rows = [dict(zip(READ_COLUMNS, values)) for values in cursor.fetchall()]
+            latest = {
+                row["platform"]: row
+                for row in (dict(zip(READ_COLUMNS, values)) for values in cursor.fetchall())
+            }
 
-    return {row["platform"]: row for row in rows}
+    cycle: dict[str, dict[str, Any]] = {}
+    for platform in platforms:
+        name = str(platform)
+        row = latest.get(name)
+        if row is None:
+            cycle[name] = {"status": "failed", "manifest": None}
+            continue
+
+        age = (target_date - row["target_date"]).days
+        if age > max_stale_days:
+            cycle[name] = {
+                "status": "failed",
+                "manifest": None,
+                "stale_target_date": row["target_date"],
+                "age_days": age,
+            }
+            continue
+
+        cycle[name] = {
+            "status": "ok" if age == 0 else "stale",
+            "manifest": row,
+            "source_target_date": row["target_date"],
+            "age_days": age,
+        }
+    return cycle

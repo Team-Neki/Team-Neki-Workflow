@@ -214,17 +214,15 @@ base_url  board_code  referer  platform
 `storage.COLUMNS`가 정본이며, `CollectedStore`에 필드를 더하면 여기에도 넣어야
 합니다. 빠뜨리면 조용히 누락되지 않고 `DictWriter`가 `ValueError`로 막습니다.
 
-**collect는 압축하지 않습니다.** 하루 전량이 수백 KB라 gzip으로 줄여서 얻는 것이
-없고, 압축하면 바로 열린다는 이점이 사라집니다. `raw/`는 HTML 원문이라 크기가
-있어 gzip으로 둡니다.
+**압축하지 않습니다.** collect는 하루 전량이 수백 KB, raw는 압축을 풀어도 5MB
+안팎이라 gzip으로 줄여서 얻는 것이 없고, 압축하면 콘솔에서 바로 열린다는 이점이
+사라집니다. 대신 Content-Type을 넣어 콘솔의 "열기"가 브라우저에서 바로 보여주게
+합니다.
 
 **CSV에는 타입도 null도 없습니다.** 빈 칸과 빈 문자열이 구분되지 않으므로
 수집 단계는 값이 없을 때 빈 문자열이 아니라 `None`을 넣어야 하고, 읽는 쪽인
 `read_stores`가 빈 칸을 `None`으로, 좌표를 `float`으로 되돌립니다. 이 규칙이
 깨지면 좌표가 문자열인 채로 enrich에 넘어갑니다.
-
-run manifest는 CSV로 바꾸지 않습니다. `brands`처럼 중첩된 값을 담고 있어 표로
-펼칠 수 없습니다. 브랜드별 적재 위치는 JSON이 아니라 Postgres로 옮겼습니다.
 
 ### 수집 스케줄은 한 곳에만 있습니다
 
@@ -255,18 +253,24 @@ Prefect 3에서 동기 서브플로우 호출은 순차입니다. `ThreadPoolExe
 
 **이전 데이터를 이번 사이클로 복사하지 않습니다.** 수집한 적 없는 것이 이번 것처럼
 보이면 collect 계층이 거짓말을 하게 되고, 며칠이 지나도 신선도를 알 수 없습니다.
-대신 run manifest가 브랜드마다 `source_target_date`로 어느 사이클을 읽을지
-가리킵니다. 다음 단계는 그것만 보면 되고 신선한지 따로 판단할 필요가 없습니다.
+
+**무엇을 대신 읽을지는 기록하지 않고 읽는 시점에 계산합니다.** `manifest.read_cycle`이
+브랜드마다 사이클 이하의 가장 최근 행을 집어 며칠 지났는지로 상태를 매기고,
+`stores_collect`와 enrich가 같은 함수를 씁니다. 규칙이 한 곳이어야 수집이 정한
+것과 다음 단계가 보는 것이 어긋나지 않습니다. 실행 요약을 S3에 따로 남기지 않는
+이유가 이것입니다. 실패 사유는 Prefect 로그에 있고, 무엇을 읽을지는 테이블에서
+나오며, 아침에 실패한 브랜드를 오후에 단독 재수집하면 기록은 아침 상태에 굳어
+있지만 계산은 새 행을 바로 집습니다.
 
 `MAX_STALE_DAYS`(기본 7일)를 넘으면 대신하지 않고 `failed`로 둡니다. 무한정
 대신하면 파서가 깨진 채로 몇 주가 지나도 아무도 눈치채지 못합니다. **best effort가
-고장을 감추는 장치가 되면 안 됩니다.** 쓰지 않기로 한 경우에도 `stale_dt`와
-`age_days`는 기록해 왜 버렸는지 남깁니다.
+고장을 감추는 장치가 되면 안 됩니다.** 쓰지 않기로 한 경우에도 `stale_target_date`와
+`age_days`는 돌려줘 왜 버렸는지 남깁니다.
 
 상태는 셋입니다.
 
-- `ok` : 오늘 수집됨. 이번 시도가 실패해도 오늘 파티션이 이미 있으면 여기 속함
-- `stale` : 이전 파티션으로 대신함. `age_days`가 며칠 전인지 알려줌
+- `ok` : 이 사이클에 적재됨. 이번 시도가 실패해도 이 사이클 행이 이미 있으면 여기 속함
+- `stale` : 이전 사이클로 대신함. `age_days`가 며칠 전인지 알려줌
 - `failed` : 쓸 수 있는 것이 없음
 
 `ok`와 `stale`이 하나도 없을 때만 flow를 실패시킵니다. 다음 단계로 넘길 것이 없기
@@ -276,33 +280,57 @@ Prefect 3에서 동기 서브플로우 호출은 순차입니다. `ThreadPoolExe
 ### S3 적재
 
 ```text
-raw/     platform=<브랜드>/dt=<날짜>/<이름>.gz
-collect/ platform=<브랜드>/dt=<날짜>/<HHMMSS>.csv
-runs/    dt=<대상 일자>/collect.json
+collect/platform=<브랜드>/dt=<대상 일자>/<실행 시각>.csv
+collect/platform=<브랜드>/dt=<대상 일자>/_raw/<실행 시각>/<이름>
 ```
 
-`collect/` 안에는 Hive 파티션과 CSV만 둡니다. 그래야 Glue를 그대로 붙일 수 있고,
-다른 것이 섞이면 파티션 인식이 깨집니다. **적재물의 위치는 S3가 아니라 Postgres가
-압니다.** `tb_store_collect_manifest`가 적재 한 번마다 한 행으로 경로와 건수를
-들고 있습니다. 아래 "수집 manifest는 Postgres에 있습니다"를 보세요.
+prefix는 `collect/` 하나뿐입니다. 사람이 콘솔에서 읽는 것과 Athena를 붙이는 것을
+둘 다 만족하도록 잡았습니다.
 
-`runs/`는 실행 하나를 설명합니다. 어느 브랜드가 성공하고 실패했는지, 실패 사유가
-무엇인지 담습니다. manifest 행으로는 답할 수 없습니다. **없는 행은 없다는 사실
-자체가 기록되지 않기 때문입니다.** enrich는 이걸 보고 무엇을 처리할지 정합니다.
-`brands`처럼 중첩된 값을 담고 있어 표로 펼칠 수 없으므로 이것만 JSON으로 남습니다.
+- **브랜드가 위입니다.** 브랜드 폴더를 열면 `dt=`가 이력 순으로 나열되고, 실패한
+  날은 폴더가 없어 마지막 폴더가 곧 대신 쓰이는 것입니다. 대신하기가 브랜드
+  이력을 읽는 흐름과 같습니다. "오늘 무엇이 돌았나"는 폴더가 아니라 Prefect
+  run과 `read_cycle`이 답합니다
+- **CSV와 그것을 만든 원문이 같은 파티션에 있습니다.** `_raw/<실행 시각>/` 아래이고
+  실행 시각이 CSV와 같아 짝이 맞습니다. 다른 prefix로 건너갈 일이 없습니다
+- **`_raw/`는 Athena가 무시합니다.** Hive와 Trino가 `_`나 `.`로 시작하는 폴더와
+  파일을 숨김으로 보는 규칙입니다. 이름을 바꾸면 그 성질이 사라집니다
+- **`dt=`는 적재일이 아니라 대상 일자(`target_date`)입니다.** 늦게 집힌 월요일
+  run은 월요일 폴더에 들어가고 파일명이 실제 시각을 말합니다. Athena가 사이클로
+  파티션을 건너뛰려면 파티션이 사이클이어야 합니다
+- 실행 시각은 `YYYY-MM-DD_HHMMSS`(KST)로 브랜드 flow run의 시작 시각입니다.
+  `storage.run_at`이 Prefect 컨텍스트에서 읽으므로 수집기에 인자로 나를 필요가
+  없고, 재시도도 같은 이름을 다시 씁니다. 같은 날 재실행하면 CSV도 raw 폴더도
+  하나 더 생기고 이전 것은 남습니다
+- 어느 CSV가 현재인지는 S3가 아니라 Postgres가 압니다. `tb_store_collect_manifest`가
+  적재 한 번마다 한 행으로 경로와 건수를 들고 있고, 읽는 쪽은 그 행의 `s3_path`만
+  따라갑니다. 아래 "수집 manifest는 Postgres에 있습니다"를 보세요
+- manifest 행을 본문보다 **나중에** 씁니다. 순서가 뒤집히면 행만 있고 데이터가
+  없는 창이 생깁니다
+- `read_stores`가 manifest의 `store_count`와 실제 건수를 대조합니다. 다르면
+  예외입니다. 줄이 아니라 CSV 레코드를 셉니다. 주소에 줄바꿈이 섞이면 한 건이 여러
+  줄로 인용됩니다
+- raw 객체에는 `kind=raw` 태그가 붙습니다. S3 lifecycle은 prefix나 태그로만
+  걸리는데 raw가 파티션 안에 있어 prefix로는 못 잡습니다. 코드는 지우지 않습니다
 
-- 파티션 날짜는 KST임. UTC로 끊으면 새벽 실행이 전날 파티션에 들어감
-- `collect/`와 `raw/`의 `dt=`는 **받은 날짜**고, `runs/`의 `dt=`는 **대상 일자**임.
-  둘은 보통 같고 늦게 집힌 예약 run에서만 갈림
-- CSV 파일명은 적재 시각(KST)임. 같은 날 재실행하면 파일이 하나 더 생기고 이전
-  것은 남음. manifest도 행을 하나 더 쌓으므로 파일과 행이 1:1로 맞음
-- 읽는 쪽은 manifest 행의 `s3_path`만 따라감. Glue를 붙이면 파티션의 CSV를 전부
-  읽어 같은 날 실행이 중복되므로, 그때는 이전 파일을 lifecycle로 치우거나
-  manifest가 가리키는 것만 보게 해야 함
-- manifest 행을 본문보다 **나중에** 씀. 순서가 뒤집히면 행만 있고 데이터가 없는
-  창이 생김
-- `read_stores`가 manifest의 `store_count`와 실제 건수를 대조함. 다르면 예외임.
-  줄이 아니라 CSV 레코드를 셈. 주소에 줄바꿈이 섞이면 한 건이 여러 줄로 인용됨
+`raw/`나 `runs/` prefix는 없습니다. 원문은 위처럼 CSV 옆에 있고, 실행 요약은
+Prefect 로그와 `read_cycle`이 대신합니다. 파티션 안에 `_manifest.json`도 없습니다.
+
+#### Athena를 붙이려면
+
+지금 붙이지는 않습니다. 붙이는 날 `collect/`를 테이블 위치로 잡고 `platform`(enum
+11개)과 `dt`(date)를 partition projection으로 정의하면 크롤러도 파티션 등록도
+필요 없습니다. 같은 날 재실행으로 CSV가 둘이면 파일명이 시각이라 정렬되므로 뷰
+하나로 최신만 남깁니다.
+
+```sql
+SELECT * FROM (
+  SELECT *, max("$path") OVER (PARTITION BY platform, dt) AS latest FROM collect
+) WHERE "$path" = latest
+```
+
+`_raw/`가 정말 무시되는지는 그날 `SELECT count(*)` 한 번으로 확인합니다. 어긋나면
+`_raw/`를 별도 prefix로 빼는 것이라 되돌리기 쉽습니다.
 
 `boto3.Session().client("s3")`에 `endpoint_url`을 넘기지 않습니다. 로컬과 운영의
 차이는 환경변수뿐이어야 합니다. 로컬은 `AWS_PROFILE=neki-local`, 운영은 k8s Secret이
@@ -319,7 +347,7 @@ runs/    dt=<대상 일자>/collect.json
 id           적재 일련번호 (PK)
 platform     브랜드
 target_date  대상 일자
-s3_path      s3://<버킷>/collect/platform=.../dt=.../<HHMMSS>.csv
+s3_path      s3://<버킷>/collect/platform=.../dt=.../<YYYY-MM-DD_HHMMSS>.csv
 store_count  건수
 collected_at 적재 시각 (KST 벽시계, 시간대 없는 TIMESTAMP)
 flow_run_id  적재한 flow run
@@ -339,10 +367,10 @@ KST 벽시계를 넣습니다. `TIMESTAMPTZ`로 두면 세션 시간대(운영 �
 행을 쓰면 오래된 적재를 읽습니다. 정렬은 `collected_at`이 아니라 `id`로 합니다.
 같은 초에 두 번 적재되면 시각이 같아 순서가 갈리지 않습니다.
 
-인덱스는 둘입니다. `(target_date, platform, id DESC)`는 사이클 하나를 통째로 받는
-enrich의 길이고, `(platform, target_date DESC, id DESC)`는 브랜드의 최신과 직전을
-찾는 `stores_collect`의 길입니다. 둘 다 `id`를 꼬리에 달아 같은 사이클의 여러 적재
-중 최신이 먼저 나오게 합니다.
+인덱스는 둘입니다. `(target_date, platform, id DESC)`는 한 사이클의 정확한 행을
+집는 `read_manifest`(`read_stores`)의 길이고, `(platform, target_date DESC, id DESC)`는
+브랜드마다 사이클 이하의 최신을 찾는 `read_cycle`의 길입니다. 둘 다 `id`를 꼬리에
+달아 같은 사이클의 여러 적재 중 최신이 먼저 나오게 합니다.
 
 법정동, 지하철 역과 달리 테이블 바꿔치기를 하지 않습니다. 그쪽은 매 실행이 전량
 스냅샷이지만 여기는 실행마다 한 브랜드의 한 줄이 늘 뿐이라 누적이 곧 이력입니다.
@@ -385,7 +413,7 @@ enrich의 길이고, `(platform, target_date DESC, id DESC)`는 브랜드의 최
 
 ### 법정동 코드는 Postgres에 직접 적재합니다
 
-지점 수집과 달리 S3를 거치지 않습니다. `raw/`와 `collect/`는 `platform=`
+지점 수집과 달리 S3를 거치지 않습니다. `collect/`는 `platform=`
 파티션을 쓰고 그 값은 브랜드입니다. 법정동을 넣으려면 `Platform`에 브랜드가 아닌
 값을 더해야 하고, 그러면 `stores_collect`의 `BRANDS` 순회에 섞여 들어갑니다.
 
@@ -890,10 +918,10 @@ DDL을 바꿨다면 `CREATE TABLE IF NOT EXISTS`가 기존 테이블을 고치�
 
 적재를 건드렸다면 실행 결과가 아니라 적재물을 봐야 합니다. `make s3-ls`로 키가
 빠짐없이 올라갔는지 보고, 같은 flow를 두 번 돌려 `collect/`에 CSV가 하나 늘고
-`tb_store_collect_manifest`에 행도 하나 느는지, 그 행의 `s3_path`가 나중 파일을
-가리키는지 확인합니다. `raw/`와 `runs/` 키 수는 늘지 않아야 합니다. 늘어난다면
-파티션 경로에 실행마다 바뀌는 값이 섞인 것입니다. `collect/` 안에
-`_manifest.json`이 다시 생기면 안 됩니다.
+`_raw/<실행 시각>/` 폴더도 하나 늘며 `tb_store_collect_manifest`에 행도 하나
+느는지, 그 행의 `s3_path`가 나중 파일을 가리키는지 확인합니다. CSV와 raw 폴더의
+실행 시각이 같아야 합니다. `.gz`, `raw/`, `runs/`, `_manifest.json`이 다시 생기면
+안 됩니다. 객체의 Content-Type이 비어 있어도 안 됩니다.
 
 manifest 테이블을 건드렸다면 **테이블이 없는 상태부터** 확인해야 합니다.
 `ensure_table`이 처음 만드는 경로가 따로입니다.

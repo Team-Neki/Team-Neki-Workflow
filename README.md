@@ -95,45 +95,45 @@ S3를 거치므로 한 번에 끝나지 않고 스케줄을 나눠야 하는 트
 
 ```text
 s3://<bucket>/
-  raw/     platform=LIFE_FOUR_CUT/dt=2026-08-02/page-001.html.gz
-  collect/ platform=LIFE_FOUR_CUT/dt=2026-08-02/030412.csv
-  runs/    dt=2026-08-02/collect.json
+  collect/
+    platform=LIFE_FOUR_CUT/
+      dt=2026-08-01/
+        2026-08-01_040012.csv
+        _raw/2026-08-01_040012/page-001.html …
+      dt=2026-08-02/
+        2026-08-02_040009.csv               <- 실패한 날은 dt 폴더가 없음
+        2026-08-02_153301.csv               <- 같은 날 재실행
+        _raw/2026-08-02_040009/page-001.html …
+        _raw/2026-08-02_153301/page-001.html …
 ```
 
-- `dt=` : Hive 파티션. 이후 Glue나 Athena를 그대로 붙일 수 있음
+- 브랜드가 위 : 브랜드 폴더를 열면 `dt=`가 이력이고, 실패한 날은 폴더가 없어
+  마지막 폴더가 곧 대신 쓰이는 것임
+- `dt=` : 대상 일자(`target_date`). 적재일이 아니라 수집 사이클의 날짜임. Hive
+  파티션이라 Athena를 그대로 붙일 수 있음
+- 파일명 : 실행 시각(KST). CSV와 raw가 같은 값을 써서 짝이 맞고, 같은 날 다시
+  돌리면 하나 더 생기고 이전 것은 남음
 - 포맷 : 헤더 있는 CSV. 압축하지 않아 S3 콘솔과 스프레드시트에서 바로 열리고,
   다음 단계가 Postgres `COPY`로 그대로 받음. 스키마가 아직 흔들려 Parquet은 이른
   단계임
-- `raw/` : 응답 원문. 파싱이 조용히 깨졌을 때 사이트를 다시 긁지 않고 파서만
-  고쳐 재생성하기 위함임. 보존은 S3 lifecycle에 맡김
+- `_raw/` : 응답 원문. 파싱이 조용히 깨졌을 때 사이트를 다시 긁지 않고 파서만
+  고쳐 재생성하기 위함임. 압축하지 않고 Content-Type을 달아 콘솔에서 바로 열림.
+  `_`로 시작해 Athena가 무시함. 보존은 S3 lifecycle에 맡기고 `kind=raw` 태그가
+  그 손잡이임
 
-`collect/` 안에는 파티션과 CSV만 둡니다. **어느 CSV가 현재인지는 S3가 아니라
-Postgres가 압니다.** 아래 [수집 manifest](#수집-manifest)를 보세요.
-
-`runs/`는 실행 하나를 설명합니다. manifest 행으로는 "이번 사이클에 무엇이 빠졌나"에
-답할 수 없습니다. 없는 행은 없다는 사실 자체가 기록되지 않기 때문입니다.
-
-```json
-{"target_date": "2026-08-02", "succeeded": ["MONO_MANSION", "PICDOT"],
- "stale": ["LIFE_FOUR_CUT"], "failed": ["PLANB_STUDIO"], "total": 584,
- "brands": {
-   "LIFE_FOUR_CUT": {"status": "stale", "source_target_date": "2026-08-01",
-                     "age_days": 1, "count": 252, "error": "..."}}}
-```
+**어느 CSV가 현재인지는 S3가 아니라 Postgres가 압니다.** 아래
+[수집 manifest](#수집-manifest)를 보세요.
 
 수집에 실패한 브랜드는 이전 사이클의 적재물로 대신합니다. 사이트 하나가 깨졌다고
 색인에서 브랜드가 통째로 사라지지 않게 하기 위함입니다. 이때 **이전 데이터를 이번
 사이클로 복사하지 않습니다.** 수집한 적 없는 것이 이번 것처럼 보이면 신선도를 알
-수 없게 됩니다. 대신 `source_target_date`가 어느 사이클을 읽을지 가리킵니다.
+수 없게 됩니다. 대신 `manifest.read_cycle`이 읽는 시점에 브랜드마다 사이클 이하의
+가장 최근 행을 집어 `ok`, `stale`, `failed`를 매깁니다. 수집과 enrich가 같은 함수를
+씁니다. 실행 요약을 S3에 따로 남기지 않는 이유입니다. 실패 사유는 Prefect 로그에
+있습니다.
 
 7일이 지난 데이터로는 대신하지 않습니다. 무한정 대신하면 파서가 깨진 채로 몇 주가
 지나도 아무도 눈치채지 못합니다.
-
-`collect/` 안에 두지 않은 이유가 있습니다. 그쪽은 Hive 파티션만 있어야 나중에
-Glue를 그대로 붙일 수 있고, 다른 것이 섞이면 파티션 인식이 깨집니다.
-
-CSV 파일명은 적재 시각(KST)입니다. 같은 날 다시 실행하면 파일이 하나 더 생기고
-이전 것은 남습니다. manifest도 행을 하나 더 쌓으므로 파일과 행이 1:1로 맞습니다.
 
 파티션 날짜는 KST 기준입니다. 새벽 3시 실행을 UTC로 끊으면 전날 파티션에 들어가
 운영자가 보는 날짜와 어긋나기 때문입니다.
@@ -147,7 +147,7 @@ CSV 파일명은 적재 시각(KST)입니다. 같은 날 다시 실행하면 파
 id           적재 일련번호 (PK)
 platform     브랜드
 target_date  대상 일자
-s3_path      s3://<버킷>/collect/platform=.../dt=.../<HHMMSS>.csv
+s3_path      s3://<버킷>/collect/platform=.../dt=.../<YYYY-MM-DD_HHMMSS>.csv
 store_count  건수
 collected_at 적재 시각
 flow_run_id  적재한 flow run

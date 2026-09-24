@@ -14,14 +14,8 @@ from typing import Any, Callable
 from prefect import flow, get_run_logger
 
 from flows.broomstudio_stores import broomstudio_stores
-from flows.common.manifest import (
-    ensure_table,
-    latest_manifest,
-    read_manifest,
-    target_date,
-)
+from flows.common.manifest import MAX_STALE_DAYS, ensure_table, read_cycle, target_date
 from flows.common.platform import Platform
-from flows.common.storage import put_run_manifest
 from flows.dontlxxkup_stores import dontlxxkup_stores
 from flows.harufilm_stores import harufilm_stores
 from flows.lifefourcuts_stores import lifefourcuts_stores
@@ -47,12 +41,6 @@ BRANDS: dict[Platform, Callable[..., list[Any]]] = {
     Platform.BROOM_STUDIO: broomstudio_stores,
 }
 
-# 이보다 오래된 데이터로는 대신하지 않는다. 무한정 대신하면 파서가 깨진 채로
-# 몇 주가 지나도 아무도 눈치채지 못한다. best effort 가 고장을 감추는 장치가
-# 되면 안 된다.
-MAX_STALE_DAYS = 7
-
-
 def _fill_from_previous(
     results: dict[str, dict[str, Any]], *, cycle: date, max_stale_days: int
 ) -> None:
@@ -60,7 +48,11 @@ def _fill_from_previous(
 
     이전 데이터를 이번 사이클로 복사하지 않는다. 수집한 적 없는 것이 이번 것처럼
     보이면 collect 계층이 거짓말을 하게 되고, 며칠이 지나도 신선도를 알 수 없다.
-    대신 run manifest 가 브랜드마다 어느 사이클 행을 읽을지 가리킨다.
+
+    무엇을 읽을지는 여기서 기록하지 않고 manifest 테이블에서 읽는 시점에
+    계산한다(`manifest.read_cycle`). enrich 도 같은 함수를 쓰므로 수집이 정한
+    것과 다음 단계가 보는 것이 어긋나지 않는다. 여기서는 로그와 flow 의 성패만
+    정한다.
     """
     logger = get_run_logger()
 
@@ -69,54 +61,47 @@ def _fill_from_previous(
     # 진짜 이유가 가려진다.
     ensure_table()
 
+    resolved = read_cycle(
+        cycle,
+        max_stale_days=max_stale_days,
+        platforms=[Platform(name) for name in results],
+    )
+
     for name, result in results.items():
-        platform = Platform(name)
+        attempted = result["status"]
+        outcome = resolved[name]
+        result["status"] = outcome["status"]
 
-        if result["status"] == "ok":
-            result["source_target_date"] = f"{cycle:%Y-%m-%d}"
-            result["age_days"] = 0
+        if outcome["status"] == "failed":
+            if "stale_target_date" in outcome:
+                result["stale_target_date"] = f"{outcome['stale_target_date']:%Y-%m-%d}"
+                result["age_days"] = outcome["age_days"]
+                logger.error(
+                    "%s: 가장 최근 적재물이 %s로 %d일 지나 쓰지 않습니다.",
+                    name,
+                    outcome["stale_target_date"],
+                    outcome["age_days"],
+                )
+            else:
+                logger.error("%s: 대신할 이전 적재물이 없습니다.", name)
             continue
 
-        # 이번 시도는 실패했어도 이 사이클 행이 이미 있을 수 있다. 앞선 실행이
-        # 성공했거나 단독 실행으로 채워둔 경우다. 데이터는 이번 사이클 것이므로
-        # 오래된 것으로 표시하지 않는다.
-        current = read_manifest(platform, cycle)
-        if current is not None:
-            result["status"] = "ok"
-            result["source_target_date"] = f"{cycle:%Y-%m-%d}"
-            result["age_days"] = 0
-            result["count"] = current["store_count"]
-            logger.info("%s: 이번 시도는 실패했으나 이 사이클 적재물이 이미 있습니다.", name)
-            continue
+        result["source_target_date"] = f"{outcome['source_target_date']:%Y-%m-%d}"
+        result["age_days"] = outcome["age_days"]
+        result["count"] = outcome["manifest"]["store_count"]
 
-        previous = latest_manifest(platform, before=cycle)
-        if previous is None:
-            logger.error("%s: 대신할 이전 적재물이 없습니다.", name)
-            continue
-
-        source = previous["target_date"]
-        age = (cycle - source).days
-
-        if age > max_stale_days:
-            logger.error(
-                "%s: 가장 최근 적재물이 %s로 %d일 지나 쓰지 않습니다.", name, source, age
+        if outcome["status"] == "stale":
+            logger.warning(
+                "%s: 이번 수집에 실패해 %s 사이클(%d일 전, %s건)로 대신합니다.",
+                name,
+                outcome["source_target_date"],
+                outcome["age_days"],
+                result["count"],
             )
-            result["stale_target_date"] = f"{source:%Y-%m-%d}"
-            result["age_days"] = age
-            continue
-
-        result["status"] = "stale"
-        result["source_target_date"] = f"{source:%Y-%m-%d}"
-        result["age_days"] = age
-        result["count"] = previous["store_count"]
-
-        logger.warning(
-            "%s: 이번 수집에 실패해 %s 사이클(%d일 전, %s건)로 대신합니다.",
-            name,
-            source,
-            age,
-            result["count"],
-        )
+        elif attempted == "failed":
+            # 앞선 실행이 성공했거나 단독 실행으로 채워둔 경우다. 데이터는 이번
+            # 사이클 것이므로 오래된 것으로 표시하지 않는다.
+            logger.info("%s: 이번 시도는 실패했으나 이 사이클 적재물이 이미 있습니다.", name)
 
 
 @flow(name="stores-collect", log_prints=True)
@@ -125,7 +110,7 @@ def stores_collect(
     only: list[str] | None = None,
     max_stale_days: int = MAX_STALE_DAYS,
 ) -> dict[str, dict[str, Any]]:
-    """브랜드를 병렬로 수집하고 실행 manifest 를 남긴다.
+    """브랜드를 병렬로 수집하고 대신할 것을 정한다.
 
     Prefect 3 에서 동기 서브플로우 호출은 순차다. 스레드로 감싸야 실제로
     겹쳐 돈다. 사이트 입장에서는 여전히 한 곳당 순차 접근이다.
@@ -186,9 +171,6 @@ def stores_collect(
         raise RuntimeError(
             f"쓸 수 있는 브랜드가 없습니다: {failed}. 다음 단계로 넘길 것이 없습니다."
         )
-
-    if persist:
-        put_run_manifest(results, target_date=cycle)
 
     if not succeeded:
         # 전부 이전 데이터로 버티는 상황이다. 개별 사이트 문제가 아니라 네트워크나
