@@ -16,6 +16,7 @@ flows/
     flow.py               @flow
     orders.py             @task
   stores_enrich/          법정동 보강. collect 의 최신 CSV 를 읽어 Kakao 로 b_code 를 붙임
+  search_index/           검색 색인. 서버 batch 의 색인 잡을 k8s Job 으로 띄움
   common/                 여러 워크플로가 함께 쓰는 task
 aws/config                로컬 개발용 AWS 프로파일
 compose.yaml              로컬 S3 (LocalStack)
@@ -55,8 +56,9 @@ UI나 cron이 워크플로를 직접 실행하지는 않습니다. flow run 레�
 
 ## 수집 파이프라인
 
-지점 수집은 collect, enrich, index 세 단계로 나뉩니다. 지금 있는 것은 collect 이고,
-정책의 정본은 `docs/spec/collect-pipeline.md` 입니다. 여기서는 모양만 보입니다.
+지점 수집은 collect, enrich, index 세 단계로 나뉩니다. collect 와 enrich 는 이
+저장소의 flow 이고, index 는 서버 batch 의 잡을 `search-index` flow 가 k8s Job 으로
+띄웁니다. 정책의 정본은 `docs/spec/` 의 문서입니다. 여기서는 모양만 보입니다.
 
 ```text
 [사이트]  ->  collect  ->  enrich  ->  index
@@ -84,9 +86,13 @@ s3://<bucket>/
 
 `stores-enrich` 는 매일 05:00 KST 에 collect 가 남긴 브랜드별 최신 CSV 를 읽어
 Kakao `coord2regioncode` 로 법정동 코드를 붙이고, S3 `enrich/dt=` 파티션과
-Postgres `tb_photo_booth_enriched` 세대로 남긴 뒤 서버의 색인 잡을 k8s Job 으로
-띄웁니다. 좌표가 직전 세대와 같은 지점은 Kakao 를 부르지 않습니다. 정책은
-`docs/spec/enrich-pipeline.md` 가 정본입니다.
+Postgres `tb_photo_booth_enriched` 세대로 남깁니다. 좌표가 직전 세대와 같은
+지점은 Kakao 를 부르지 않습니다. 정책은 `docs/spec/enrich-pipeline.md` 가
+정본입니다.
+
+색인은 별도 flow `search-index` 가 띄웁니다. 서버 batch 의 `searchIndexJob` 을
+k8s Job 으로 만들고 종료 코드를 flow 결과로 삼습니다. 정책은
+`docs/spec/search-index.md` 가 정본입니다.
 
 ## 네이밍 규약
 
@@ -260,12 +266,14 @@ make photolabplus
 make broomstudio
 make collect
 make enrich
+make search-index
 ```
 
 `enrich` 는 `collect` 가 남긴 브랜드별 최신 CSV 에 Kakao 로 법정동 코드를 붙여
 `enrich/dt=` 파티션과 `tb_photo_booth_enriched` 테이블에 적재합니다. 두 번 돌리면
 둘째는 전부 재사용이라 Kakao 를 부르지 않습니다. 정책은
-`docs/spec/enrich-pipeline.md` 에 있습니다.
+`docs/spec/enrich-pipeline.md` 에 있습니다. `search-index` 는 로컬에서
+`NEKI_BATCH_IMAGE` 가 없어 경고 후 끝납니다.
 
 `picdot`, `monomansion`, `photogray`, `harufilm`, `photolabplus`, `broomstudio`는
 Kakao Local API를 호출하므로 `KAKAO_API_KEY`가 필요합니다. `planbstudio`,

@@ -24,7 +24,7 @@ PREFECT_ENV = PREFECT_API_URL=$(API_URL)
 .DEFAULT_GOAL := help
 .PHONY: help setup check spec-check hello lifefourcuts photoism dontlxxkup photosignature \
 	photogray planbstudio picdot monomansion harufilm photolabplus broomstudio \
-	collect enrich legal-dong subway-station localstack localstack-down s3-init s3-ls \
+	collect enrich search-index legal-dong subway-station localstack localstack-down s3-init s3-ls \
 	serve server deploy build image clean
 
 help: ## 명령 목록을 출력한다
@@ -132,6 +132,12 @@ enrich: ## 최신 collect 적재물에 법정동 코드를 붙여 S3 와 Postgre
 	from flows.stores_enrich import stores_enrich; \
 	result = stores_enrich(); \
 	print('보강', result['count'], '건', result['status'])"
+
+search-index: ## 서버 검색 색인 잡을 k8s Job 으로 띄운다 (NEKI_BATCH_IMAGE 없으면 경고 후 끝남)
+	@$(UV) run python -c "\
+	from flows.search_index import search_index; \
+	result = search_index(); \
+	print('색인 실행' if result['launched'] else '색인 건너뜀', result['cycle'])"
 
 subway-station: ## 지하철 역 정보를 수집해 Postgres 에 적재한다 (DATABASE_URL 필요)
 	@$(UV) run python -c "\

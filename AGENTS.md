@@ -11,7 +11,9 @@
 - `docs/spec/collect-pipeline.md` : 지점 수집(collect). 산출물 레이아웃, manifest
   테이블, 대상 일자, 대신하기 규칙, 스케줄, 읽는 쪽 계약
 - `docs/spec/enrich-pipeline.md` : 지점 법정동 보강(enrich). 입력, 재사용, 상태,
-  두 산출물, 색인 Job
+  두 산출물
+- `docs/spec/search-index.md` : 검색 색인 실행(search-index). 서버 batch 잡을
+  k8s Job 으로 띄우는 계약
 
 지켜야 할 것은 셋입니다.
 
@@ -44,7 +46,8 @@ flows/
   stores_enrich/          법정동 보강. collect 의 최신 CSV 를 읽어 Kakao 로 b_code 를 붙임
     region.py             판정 (재사용, 폴백, 상태)
     table.py              tb_photo_booth_enriched 바꿔치기
-    index_job.py          서버 색인 잡을 k8s Job 으로
+  search_index/           서버 색인 잡을 k8s Job 으로 띄우고 기다림
+    job.py                매니페스트와 실행
   common/                 여러 워크플로가 함께 쓰는 task
     store.py              수집 공통 스키마 (CollectedStore)
     storage.py            S3 적재
@@ -175,12 +178,21 @@ flow run이 work pool 기본 이미지(베이스 prefect 이미지)로 떠서 `f
   옛 구 이름이라 인천 20여 건이 늘 경고로 뜨는데 코드는 맞음
 - Kakao 조회는 task 하나 안의 쓰레드. 지점마다 task 를 만들지 않음. 쓰레드 안에서
   `get_run_logger` 를 부르지 않음 (컨텍스트가 따라가지 않음)
-- 색인 Job 은 `NEKI_BATCH_IMAGE` 가 있을 때만. 매니페스트는 `generateName` 이 아니라
-  `metadata.name` 이어야 함. prefect-kubernetes 가 이름으로 상태를 읽음
+- 색인은 여기서 띄우지 않음. 묶으면 enrich 재시도가 색인을 되풀이하고 색인 실패가
+  enrich 를 실패로 만듦. 별도 flow `search-index` 가 시각으로 뒤에 돎
+
+## 검색 색인 (search-index)
+
+정책은 `docs/spec/search-index.md` 가 정본입니다.
+
+- 하는 일은 서버 batch 의 `searchIndexJob` 을 k8s Job 으로 띄우고 기다리는 것뿐.
+  `NEKI_BATCH_IMAGE` 가 없으면 경고 후 끝남
+- 매니페스트는 `generateName` 이 아니라 `metadata.name` 이어야 함.
+  prefect-kubernetes 가 이름으로 상태를 읽음
 - `prefect-kubernetes` 버전은 Dockerfile 베이스와 같아야 함. 다르면 이미지 안의
   것이 교체됨
-- BACKEND-65 가 `searchIndexJob` 을 넣기 전까지 deployment 파라미터
-  `run_index=False`. 들어오면 그 줄을 지움
+- BACKEND-65 가 `searchIndexJob` 을 넣기 전까지 스케줄 없음. 들어오면
+  `deployments/search_index.py` 에 05:30 KST cron 을 붙임
 
 ## 마스터 데이터 (법정동, 지하철 역)
 
@@ -648,6 +660,7 @@ make photolabplus
 make broomstudio
 make collect
 make enrich
+make search-index
 make s3-ls
 make subway-station
 make legal-dong
@@ -666,8 +679,7 @@ make legal-dong
 `enrich` 는 `make collect` 뒤에 돕니다. 판정을 건드렸다면 두 번 돌려 첫 실행이
 `ok`, 둘째가 `reused` 인지, `KAKAO_API_KEY` 를 비우고도 완주하는지 봅니다. 적재를
 건드렸다면 테이블이 없는 상태부터 확인하고 두 번 돌려 `tb_photo_booth_enriched`
-와 `_prev` 가 같은 건수인지, 인덱스 이름의 번호가 `1` 을 넘지 않는지 봅니다. 색인
-단계는 로컬에서 `NEKI_BATCH_IMAGE` 가 없어 경고 후 건너뛰는 것이 정상입니다.
+와 `_prev` 가 같은 건수인지, 인덱스 이름의 번호가 `1` 을 넘지 않는지 봅니다.
 
 ```bash
 psql -c 'DROP TABLE IF EXISTS tb_photo_booth_enriched, tb_photo_booth_enriched_prev'
@@ -675,6 +687,9 @@ make enrich
 make enrich
 psql -c "select geocode_status, count(*) from tb_photo_booth_enriched group by 1"
 ```
+
+`search-index` 는 로컬에서 `NEKI_BATCH_IMAGE` 가 없어 경고 후 끝나는 것이
+정상입니다. Job 을 실제로 띄우는 확인은 staging 에서 합니다.
 
 `legal-dong`은 `DATABASE_URL`이 있어야 돕니다. 파싱과 정규화만 볼 때는
 `legal_dong(persist=False)`로 끄면 `DATABASE_URL` 없이도 됩니다.

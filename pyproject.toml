@@ -17,7 +17,7 @@ dependencies = [
     "psycopg[binary]>=3.2.0",
     # 국가철도공단 역사 정보가 xlsx 로만 온다.
     "openpyxl>=3.1.0",
-    # enrich 가 색인 Job 을 k8s 에 띄운다. Dockerfile 베이스 이미지
+    # search-index 가 색인 Job 을 k8s 에 띄운다. Dockerfile 베이스 이미지
     # (prefecthq/prefect:3.8.5-*-kubernetes)에 든 것과 같은 버전이어야 한다.
     # 다르면 이미지 안의 prefect-kubernetes 가 교체되어 worker 가 깨진다.
     "prefect-kubernetes==0.7.12",

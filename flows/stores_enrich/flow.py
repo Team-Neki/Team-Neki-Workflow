@@ -12,7 +12,9 @@ manifest.read_cycle 이 정한다. 브랜드마다 대상 일자 이하의 최�
 
 산출물은 둘이다. S3 enrich/dt=<사이클>/<실행 시각>.csv 는 이력과 재실행 원천이고,
 Postgres tb_photo_booth_enriched 는 index(서버 batch)가 읽는 현재 세대다.
-성공하면 색인 Job 을 띄우고 그 종료 코드가 flow 결과가 된다.
+색인은 여기서 띄우지 않는다. 별도 flow search-index 가 시각으로 뒤에 돌며 그
+시점의 현재 세대를 읽는다. 묶으면 enrich 재시도가 색인을 되풀이하고 색인 실패가
+enrich 를 실패로 만든다.
 """
 
 from collections import Counter
@@ -24,8 +26,7 @@ from prefect import flow, get_run_logger
 from flows.common.manifest import KST, MAX_STALE_DAYS, ensure_table, read_cycle
 from flows.common.manifest import target_date as cycle_date
 from flows.common.platform import Platform
-from flows.common.storage import put_enriched, read_stores, run_at
-from flows.stores_enrich.index_job import run_search_index
+from flows.common.storage import put_enriched, read_stores
 from flows.stores_enrich.region import (
     COLUMNS,
     EnrichedStore,
@@ -84,21 +85,18 @@ def _read_inputs(
 def stores_enrich(
     target_date: date | None = None,
     persist: bool = True,
-    run_index: bool = True,
     max_stale_days: int = MAX_STALE_DAYS,
 ) -> dict[str, Any]:
-    """최신 collect 적재물에 법정동 코드를 붙여 S3 와 Postgres 에 남기고 색인을 띄운다.
+    """최신 collect 적재물에 법정동 코드를 붙여 S3 와 Postgres 에 남긴다.
 
     target_date 는 사이클 날짜다. 비우면 이 run 의 예약 시각(KST)이고 백필은
-    지난 날짜를 준다. persist 를 끄면 S3 와 Postgres 에 쓰지 않고 색인도 띄우지
-    않는다. 직전 세대도 읽지 않으므로 전 지점을 Kakao 에 묻는다. run_index 를
-    끄면 적재까지만 한다.
+    지난 날짜를 준다. persist 를 끄면 S3 와 Postgres 에 쓰지 않는다. 직전 세대도
+    읽지 않으므로 전 지점을 Kakao 에 묻는다.
     """
     logger = get_run_logger()
 
     cycle = target_date or cycle_date()
     enriched_at = datetime.now(KST).replace(tzinfo=None)
-    started = run_at()
 
     stores = _read_inputs(cycle, max_stale_days=max_stale_days, enriched_at=enriched_at)
     if not stores:
@@ -165,8 +163,4 @@ def stores_enrich(
     elif swapped["unknown_codes"] < 0:
         logger.warning("tb_legal_dong 이 없어 법정동 코드를 대조하지 못했습니다.")
     result["table"] = swapped
-
-    if run_index:
-        result["indexed"] = run_search_index(cycle, run_at=started)
-
     return result

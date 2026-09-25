@@ -1,8 +1,8 @@
 # 지점 법정동 보강(enrich) 파이프라인 정책
 
 이 문서는 collect 가 남긴 지점 좌표에 법정동 코드를 붙이는 enrich 단계의 정책을
-다룹니다. 무엇을 읽고, 어떻게 판정하며, 어디에 어떤 모양으로 남기고, 끝나면
-무엇을 띄우는지를 정합니다.
+다룹니다. 무엇을 읽고, 어떻게 판정하며, 어디에 어떤 모양으로 남기는지를
+정합니다. 색인을 띄우는 일은 `docs/spec/search-index.md` 가 따로 다룹니다.
 
 **이 문서가 정본입니다.** 코드와 이 문서가 어긋나면 문서가 맞고 코드가 틀린
 것입니다. 동작을 바꾸려면 이 문서를 먼저 고치고 같은 PR 에서 코드를 맞춥니다.
@@ -30,8 +30,8 @@
 - `(platform, idx)` 중복은 첫 것만 남기고 경고. 결과 테이블의 PK 임
 - `collected_at` 은 CSV 의 시간대 붙은 ISO 문자열을 KST 벽시계로 바꾸고 시간대를 뗌
 
-구현 : `deployments/stores_enrich.py:27` `schedule=Cron(`,
-`flows/stores_enrich/flow.py:45` `def _read_inputs`,
+구현 : `deployments/stores_enrich.py:25` `schedule=Cron(`,
+`flows/stores_enrich/flow.py:46` `def _read_inputs`,
 `flows/stores_enrich/region.py:79` `def from_collect`
 
 ## 판정
@@ -109,28 +109,14 @@ index 가 읽는 현재 세대입니다. 세대 교체는 `tb_legal_dong` 과 �
 구현 : `flows/stores_enrich/table.py:28` `TABLE`,
 `flows/stores_enrich/table.py:125` `def swap_table`,
 `flows/stores_enrich/table.py:105` `def read_current`,
-`flows/stores_enrich/flow.py:42` `MIN_EXPECTED`
+`flows/stores_enrich/flow.py:43` `MIN_EXPECTED`
 
-## 색인 Job
+## 색인은 별도 flow 가 띄운다
 
-성공하면 `NEKI_BATCH_IMAGE` 이미지를 `--spring.batch.job.name=searchIndexJob
-businessDate=<사이클>` 인자로 k8s Job 에 띄우고 완료를 기다립니다. Job 실패는
-flow 실패입니다. 환경변수가 없으면 경고 후 건너뜁니다.
-
-- 이미지는 GitOps `overlays/prefect/images.env` (ConfigMap `neki-images`, BACKEND-143)
-- Job 이름은 `search-index-<실행 시각>`. prefect-kubernetes 가 `metadata.name` 으로
-  상태를 읽으므로 `generateName` 은 못 씀
-- env 는 `TZ`, 그리고 Secret `prefect-workflow` 의 `SPRING_PROFILES_ACTIVE`,
-  `JASYPT_PASSWORD` 둘만. Secret 을 통째로 넘기지 않음
-- 완료된 Job 은 지우지 않고 `ttlSecondsAfterFinished` 로 하루 뒤 정리
-- flow run 파드는 SA `prefect-worker`. base job template 기본값이라 deployment 는
-  지정하지 않음
-- BACKEND-65 가 `searchIndexJob` 을 넣기 전까지 deployment 파라미터 `run_index=False`
-
-구현 : `flows/stores_enrich/index_job.py:29` `IMAGE_ENV`,
-`flows/stores_enrich/index_job.py:48` `def manifest`,
-`flows/stores_enrich/index_job.py:106` `def run_search_index`,
-`deployments/stores_enrich.py:31` `parameters={"run_index": False}`
+enrich 가 끝나도 색인 Job 을 띄우지 않습니다. 묶으면 enrich 재시도가 색인을
+되풀이하고 색인 실패가 enrich 를 실패로 만듭니다. `search-index` flow 가 시각으로
+뒤에 돌며 그 시점의 `tb_photo_booth_enriched` 현재 세대를 읽습니다. 정책은
+`docs/spec/search-index.md` 에 있습니다.
 
 ## 외부 의존과 장애
 
@@ -140,16 +126,14 @@ flow 실패입니다. 환경변수가 없으면 경고 후 건너뜁니다.
 | S3 (읽기) | 그 브랜드 예외로 flow 실패. 건수 불일치도 같음 |
 | Kakao | 그 지점만 `failed`. 연속 3회면 남은 지점은 묻지 않음. flow 완주 |
 | S3 (쓰기) | 재시도 셋 뒤 flow 실패. 스왑 전이라 테이블 그대로 |
-| k8s / batch 이미지 | 색인 단계에서 flow 실패. 테이블은 새 세대. 다시 돌리면 재사용으로 스왑 뒤 색인만 다시 |
-| `NEKI_BATCH_IMAGE` 없음 | 경고 후 건너뜀. flow 성공 |
 
 ## 재실행과 백필
 
 - 같은 deployment 를 다시 실행. 재사용 덕에 Kakao 호출이 거의 없음
 - 백필은 `stores_enrich(target_date=<지난 날짜>)`. 그 날짜 이하의 최신 적재물을
   읽고 파티션과 staging 테이블 이름에 그 날짜가 붙음
-- `persist=False` 는 S3 와 Postgres 에 쓰지 않고 색인도 안 띄움. 직전 세대도 안
-  읽으므로 전 지점을 Kakao 에 물음
+- `persist=False` 는 S3 와 Postgres 에 쓰지 않음. 직전 세대도 안 읽으므로 전
+  지점을 Kakao 에 물음
 
 ## 변경 검증
 
@@ -165,4 +149,4 @@ flow 실패입니다. 환경변수가 없으면 경고 후 건너뜁니다.
 enrich 는 05:00 KST 에 manifest 가 가리키는 브랜드별 최신 CSV 를 읽어 좌표를
 법정동 코드로 바꿉니다. 좌표가 안 바뀐 지점은 직전 답을 재사용하고 Kakao 가
 죽어도 완주합니다. S3 파티션 하나와 Postgres 세대 하나를 남기고 800건 미만이면
-바꿔치우지 않으며, 끝나면 서버 색인 잡을 k8s Job 으로 띄웁니다.
+바꿔치우지 않습니다. 색인은 별도 flow `search-index` 가 띄웁니다.

@@ -10,9 +10,7 @@ Prefect cron 은 timezone 을 주지 않으면 UTC 라 명시한다.
 매월 1일 legal-dong(05:00 KST)과 겹친다. enrich 는 tb_legal_dong 을 대조용으로
 SELECT 만 하고 그쪽 스왑은 원자적이라 해가 없다.
 
-flow run 파드가 색인 Job 을 만들려면 SA prefect-worker 가 필요하다. 그 값은
-GitOps 의 base job template 기본값에 있어(BACKEND-143) deployment 마다 지정하지
-않는다.
+색인(search-index)은 여기 묶지 않고 별도 deployment 가 시각으로 뒤에 돈다.
 """
 
 from prefect.deployments.runner import RunnerDeployment
@@ -25,8 +23,4 @@ def build() -> RunnerDeployment:
     return stores_enrich.to_deployment(
         name="stores-enrich",
         schedule=Cron("0 5 * * *", timezone="Asia/Seoul"),
-        # BACKEND-65 가 searchIndexJob 을 넣기 전까지 색인 단계를 끈다. 없는 잡
-        # 이름이면 batch 가 종료 코드 1 로 죽어 enrich 가 매일 실패한다. 65 가
-        # 들어오면 이 줄을 지운다. 수동 실행은 UI 에서 run_index 를 켤 수 있다.
-        parameters={"run_index": False},
     )

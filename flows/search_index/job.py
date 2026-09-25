@@ -1,9 +1,14 @@
-"""enrich 가 끝나면 서버의 검색 색인 잡을 k8s Job 으로 띄우고 끝나기를 기다린다.
+"""서버의 검색 색인 잡을 k8s Job 으로 띄우고 끝나기를 기다린다.
 
 색인(BACKEND-65)은 Python 이 아니라 Team-Neki-Server apps/batch 의 Spring Batch
 잡(searchIndexJob)이다. 정규화 규칙이 색인과 검색 질의에서 같은 Kotlin 함수여야
-하기 때문이다. 이 모듈은 순서만 책임진다. enrich 세대가 바뀐 뒤에 색인이
-돌아야 하고, 그 성패가 flow 결과에 보여야 한다.
+하기 때문이다. 이 모듈은 띄우고 기다리는 것만 책임진다. 그 성패가 flow 결과에
+보여야 한다.
+
+enrich flow 안에서 부르지 않는다. 묶으면 enrich 재시도가 색인을 되풀이하고 색인
+실패가 enrich 를 실패로 만든다. collect 와 enrich 처럼 별도 deployment 로 두고
+시각으로 순서를 맞춘다. 색인은 그 시점의 tb_photo_booth_enriched 현재 세대를
+읽는다.
 
 one-shot 계약(BACKEND-128): 인자 --spring.batch.job.name=searchIndexJob 과
 businessDate=<사이클> 로 기동해 잡 하나를 돌리고 종료 코드로 성패를 알린다.
@@ -108,7 +113,7 @@ def run_search_index(cycle: date, *, run_at: str) -> bool:
 
     Job 이 실패하면 wait_for_completion 이 RuntimeError 를 올려 flow 가 실패한다.
     그것이 계약이다. 재시도를 붙이지 않는다. 색인은 멱등이라 flow 를 다시 돌리면
-    되고, 그때 enrich 는 재사용으로 Kakao 없이 스왑까지 간다.
+    된다.
     """
     logger = get_run_logger()
 
