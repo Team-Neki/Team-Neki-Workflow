@@ -42,7 +42,8 @@
 - 재사용 : 직전 세대(현재 `tb_photo_booth_enriched`)와 좌표가 같고 직전에
   `b_code` 가 있으면 Kakao 없이 그 답을 씀. 직전이 `failed` 면 다시 물음
 - 폴백 : 좌표가 없는 지점만 collect 의 `geocode.locate` 로 좌표를 얻어 같은
-  길로 보냄. 얻은 좌표는 `coordinate_source = kakao` 로 결과에 넣음
+  길로 보냄. 얻은 좌표는 `coordinate_source = kakao` 로 결과에 넣고, 그 뒤 법정동
+  조회가 실패해도 좌표는 남김
 - 상태 : `ok` Kakao 응답 / `reused` 재사용 / `no_coordinate` 좌표 없고 폴백 실패 /
   `failed` 좌표는 있으나 Kakao 실패
 - 쓰레드 4개. 조회 하나는 3번까지 다시 해보고 연속 3번 실패하면 남은 지점은 묻지
@@ -53,7 +54,7 @@
 구현 : `flows/common/kakao.py:111` `def coord2regioncode`,
 `flows/stores_enrich/region.py:112` `def reusable`,
 `flows/stores_enrich/region.py:145` `def resolve`,
-`flows/stores_enrich/region.py:223` `def enrich_stores`,
+`flows/stores_enrich/region.py:234` `def enrich_stores`,
 `flows/stores_enrich/region.py:39` `WORKERS`
 
 ## 주소는 해석하지 않는다
@@ -71,7 +72,7 @@
 코드는 맞으므로 경고만 보고 넘어가면 됩니다. `reused` 행은 처음 판정될 때 이미
 경고했으므로 매일 되풀이하지 않습니다.
 
-구현 : `flows/stores_enrich/region.py:210` `def mismatched`,
+구현 : `flows/stores_enrich/region.py:221` `def mismatched`,
 `flows/stores_enrich/table.py:32` `LEGAL_DONG_TABLE`
 
 ## 산출물 : S3

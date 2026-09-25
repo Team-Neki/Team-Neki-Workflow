@@ -144,8 +144,12 @@ def _retry(call: Callable[[], Any]) -> Any:
 
 def resolve(
     store: EnrichedStore, previous: EnrichedStore | None, *, stop: threading.Event
-) -> EnrichedStore:
-    """지점 하나의 법정동을 정한다. 조회가 끝내 실패하면 예외를 올린다.
+) -> tuple[EnrichedStore, Exception | None]:
+    """지점 하나의 법정동을 정한다. 조회가 끝내 실패하면 그 예외를 행과 함께 돌려준다.
+
+    예외를 올리지 않고 돌려주는 이유는 폴백 좌표 때문이다. 좌표가 없던 지점이
+    geocode.locate 로 좌표를 얻은 뒤 법정동 조회에서 실패하면 그 좌표는 행에
+    남아야 한다. 올려 버리면 호출부는 조회 전 행밖에 몰라 좌표를 잃는다.
 
     stop 이 걸려 있으면 Kakao 를 부르지 않고 빈 채로 돌려준다. 키가 없거나
     연속 실패로 포기한 뒤의 지점이 여기로 온다. 재사용은 Kakao 없이도 된다.
@@ -158,28 +162,32 @@ def resolve(
             region_2depth_name=previous.region_2depth_name,
             region_3depth_name=previous.region_3depth_name,
             geocode_status="reused",
-        )
+        ), None
 
     longitude, latitude = store.longitude, store.latitude
     coordinate_source = store.coordinate_source
     missing = longitude is None or latitude is None
 
     if stop.is_set():
-        return replace(store, geocode_status="no_coordinate" if missing else "failed")
+        status = "no_coordinate" if missing else "failed"
+        return replace(store, geocode_status=status), None
 
     if missing:
         # collect 가 못 채운 좌표를 한 번 더 찾는다. 수집 때 Kakao 가 죽어 있던
         # 경우다. 규칙(주소검색 뒤 키워드검색)은 collect 의 것을 그대로 쓴다.
-        found = geocode.locate(
-            CollectedStore(
-                platform=Platform(store.platform),
-                idx=store.idx,
-                name=store.name,
-                address=store.address,
+        try:
+            found = geocode.locate(
+                CollectedStore(
+                    platform=Platform(store.platform),
+                    idx=store.idx,
+                    name=store.name,
+                    address=store.address,
+                )
             )
-        )
+        except Exception as error:
+            return replace(store, geocode_status="no_coordinate"), error
         if found is None:
-            return replace(store, geocode_status="no_coordinate")
+            return replace(store, geocode_status="no_coordinate"), None
         longitude, latitude, _ = found
         coordinate_source = "kakao"
 
@@ -188,13 +196,16 @@ def resolve(
         "latitude": latitude,
         "coordinate_source": coordinate_source,
     }
-    document = _retry(
-        lambda: kakao.coord2regioncode(
-            longitude, latitude, timeout=geocode.LOOKUP_TIMEOUT
+    try:
+        document = _retry(
+            lambda: kakao.coord2regioncode(
+                longitude, latitude, timeout=geocode.LOOKUP_TIMEOUT
+            )
         )
-    )
+    except Exception as error:
+        return replace(store, geocode_status="failed", **coordinates), error
     if document is None:
-        return replace(store, geocode_status="failed", **coordinates)
+        return replace(store, geocode_status="failed", **coordinates), None
 
     return replace(
         store,
@@ -204,7 +215,7 @@ def resolve(
         region_3depth_name=document.get("region_3depth_name") or None,
         geocode_status="ok",
         **coordinates,
-    )
+    ), None
 
 
 def mismatched(store: EnrichedStore) -> bool:
@@ -245,21 +256,18 @@ def enrich_stores(stores: list[EnrichedStore], previous: Previous) -> list[Enric
 
     def work(store: EnrichedStore) -> tuple[EnrichedStore, Exception | None]:
         nonlocal failures
-        try:
-            result = resolve(store, previous.get((store.platform, store.idx)), stop=stop)
-        except Exception as error:
-            with lock:
+        key = (store.platform, store.idx)
+        result, error = resolve(store, previous.get(key), stop=stop)
+        with lock:
+            if error is not None:
                 failures += 1
                 if failures >= geocode.GIVE_UP_AFTER:
                     stop.set()
-            missing = store.longitude is None or store.latitude is None
-            return replace(store, geocode_status="no_coordinate" if missing else "failed"), error
-        if result.geocode_status == "ok":
-            # Kakao 가 실제로 답한 경우에만 연속 실패를 끊는다. reused 는 Kakao 를
-            # 부르지 않아 장애를 가릴 수 있다.
-            with lock:
+            elif result.geocode_status == "ok":
+                # Kakao 가 실제로 답한 경우에만 연속 실패를 끊는다. reused 는 Kakao 를
+                # 부르지 않아 장애를 가릴 수 있다.
                 failures = 0
-        return result, None
+        return result, error
 
     with ThreadPoolExecutor(max_workers=WORKERS) as pool:
         outcomes = list(pool.map(work, stores))

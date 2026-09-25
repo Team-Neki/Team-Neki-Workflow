@@ -3,6 +3,7 @@
 import threading
 from datetime import date, datetime
 
+from flows.stores_enrich import region
 from flows.stores_enrich.region import (
     EnrichedStore,
     from_collect,
@@ -74,7 +75,8 @@ def test_resolve_reuses_without_kakao():
     )
     stop = threading.Event()
     stop.set()  # Kakao 를 부르면 안 된다. 불리면 stop 뒤라 빈 채로 돌아온다
-    row = resolve(store(), previous, stop=stop)
+    row, error = resolve(store(), previous, stop=stop)
+    assert error is None
     assert row.geocode_status == "reused"
     assert row.b_code == "1168010100"
     assert row.region_3depth_name == "역삼동"
@@ -83,11 +85,26 @@ def test_resolve_reuses_without_kakao():
 def test_resolve_marks_status_when_stopped():
     stop = threading.Event()
     stop.set()
-    assert resolve(store(), None, stop=stop).geocode_status == "failed"
-    assert (
-        resolve(store(longitude=None, latitude=None), None, stop=stop).geocode_status
-        == "no_coordinate"
+    assert resolve(store(), None, stop=stop)[0].geocode_status == "failed"
+    row, _ = resolve(store(longitude=None, latitude=None), None, stop=stop)
+    assert row.geocode_status == "no_coordinate"
+
+
+def _kakao_down(*args, **kwargs):
+    raise RuntimeError("kakao down")
+
+
+def test_resolve_keeps_fallback_coordinates_when_region_lookup_fails(monkeypatch):
+    monkeypatch.setattr(
+        region.geocode, "locate", lambda _store: (127.1, 37.6, "kakao_address")
     )
+    monkeypatch.setattr(region.kakao, "coord2regioncode", _kakao_down)
+    monkeypatch.setattr(region.time, "sleep", lambda _seconds: None)
+    row, error = resolve(store(longitude=None, latitude=None), None, stop=threading.Event())
+    assert isinstance(error, RuntimeError)
+    assert row.geocode_status == "failed"
+    assert row.b_code is None
+    assert (row.longitude, row.latitude, row.coordinate_source) == (127.1, 37.6, "kakao")
 
 
 def test_mismatched_compares_first_token_of_sigungu():
