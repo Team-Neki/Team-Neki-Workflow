@@ -32,7 +32,7 @@
 
 구현 : `deployments/stores_enrich.py:25` `schedule=Cron(`,
 `flows/stores_enrich/flow.py:46` `def _read_inputs`,
-`flows/stores_enrich/region.py:79` `def from_collect`
+`flows/stores_enrich/region.py:81` `def from_collect`
 
 ## 판정
 
@@ -40,22 +40,22 @@
 `code` 와 시도, 시군구, 읍면동 이름을 받습니다.
 
 - 재사용 : 직전 세대(현재 `tb_photo_booth_enriched`)와 좌표가 같고 직전에
-  `b_code` 가 있으면 Kakao 없이 그 답을 씀. 직전이 `failed` 면 다시 물음
+  `b_code` 가 있으면 Kakao 없이 그 답을 씀. 직전이 `failed` 면 다시 물음. 직전 세대의
+  컬럼이 지금 스키마와 다르면(컬럼 이름을 바꾼 직후) 재사용 없이 전 지점을 물음
 - 폴백 : 좌표가 없는 지점만 collect 의 `geocode.locate` 로 좌표를 얻어 같은
   길로 보냄. 얻은 좌표는 `coordinate_source = kakao` 로 결과에 넣고, 그 뒤 법정동
   조회가 실패해도 좌표는 남김
 - 상태 : `ok` Kakao 응답 / `reused` 재사용 / `no_coordinate` 좌표 없고 폴백 실패 /
   `failed` 좌표는 있으나 Kakao 실패
 - 쓰레드 4개. 조회 하나는 3번까지 다시 해보고 연속 3번 실패하면 남은 지점은 묻지
-  않음. 상수는 `geocode.py` 것을 씀. Kakao 가 답하면 법정동 문서가 없어도 연속
-  실패는 0 으로 돌아감. 재사용과 건너뛴 지점은 Kakao 를 부르지 않아 세지 않음
+  않음. 상수는 `geocode.py` 것을 씀
 - `KAKAO_API_KEY` 가 없으면 재사용만 하고 나머지는 비움. flow 는 완주함
 - task 는 하나. 지점마다 task 를 만들지 않음. 쓰레드 안에서 로그를 남기지 않음
 
 구현 : `flows/common/kakao.py:111` `def coord2regioncode`,
-`flows/stores_enrich/region.py:112` `def reusable`,
-`flows/stores_enrich/region.py:145` `def resolve`,
-`flows/stores_enrich/region.py:251` `def enrich_stores`,
+`flows/stores_enrich/region.py:114` `def reusable`,
+`flows/stores_enrich/region.py:147` `def resolve`,
+`flows/stores_enrich/region.py:253` `def enrich_stores`,
 `flows/stores_enrich/region.py:39` `WORKERS`
 
 ## 주소는 해석하지 않는다
@@ -63,9 +63,12 @@
 주소 문자열을 시도, 시군구 컬럼으로 나누거나 "서울" 과 "서울특별시" 를 맞추지
 않습니다. 계층은 코드 10자리(시도2+시군구3+읍면동3+리2)에 있고 이름의 정본은
 `tb_legal_dong` 이라 코드로 조인하면 됩니다. Kakao 도 API 마다 표기가 다릅니다.
-결과의 `region_*depth_name` 은 Kakao 가 준 문자열 그대로이고 운영 확인용입니다.
+결과의 `sido_name`, `sgg_name`, `umd_name` 은 Kakao 가 준 시도, 시군구, 읍면동 문자열
+그대로이고 운영 확인용입니다. 이름은 `tb_legal_dong` 과 같고 각각 `b_code` 앞 2, 5, 8자리에
+대응합니다. 특례시 일반구는 시군구 한 자리라 `sgg_name` 이 "수원시 영통구" 이고, 세종은
+시군구가 없어 `sgg_name` 이 비어 있습니다.
 
-경고 둘만 남깁니다. `ok` 행에서 `region_2depth_name` 첫 토큰이 원문 주소에
+경고 둘만 남깁니다. `ok` 행에서 `sgg_name` 첫 토큰이 원문 주소에
 없으면 시군구 불일치, 스왑 트랜잭션 안에서 `tb_legal_dong` 에 없는 `b_code`
 건수. 둘 다 flow 를 막지 않습니다. 시군구 불일치는 좌표가 틀린 경우 말고도
 행정구역 개편 뒤 사이트 주소가 옛 이름인 경우에 뜹니다. 2026-07 인천 개편(중구,
@@ -73,7 +76,7 @@
 코드는 맞으므로 경고만 보고 넘어가면 됩니다. `reused` 행은 처음 판정될 때 이미
 경고했으므로 매일 되풀이하지 않습니다.
 
-구현 : `flows/stores_enrich/region.py:221` `def mismatched`,
+구현 : `flows/stores_enrich/region.py:223` `def mismatched`,
 `flows/stores_enrich/table.py:32` `LEGAL_DONG_TABLE`
 
 ## 산출물 : S3
@@ -90,7 +93,7 @@ enrich/dt=<사이클>/<실행 시각>.csv        e.g. enrich/dt=2026-09-25/2026-
 
 구현 : `flows/common/storage.py:71` `ENRICH_PREFIX`,
 `flows/common/storage.py:318` `def put_enriched`,
-`flows/stores_enrich/region.py:73` `COLUMNS = tuple(`
+`flows/stores_enrich/region.py:75` `COLUMNS = tuple(`
 
 ## 산출물 : Postgres `tb_photo_booth_enriched`
 
@@ -109,7 +112,7 @@ index 가 읽는 현재 세대입니다. 세대 교체는 `tb_legal_dong` 과 �
   그쪽을 기다리지 않음
 
 구현 : `flows/stores_enrich/table.py:28` `TABLE`,
-`flows/stores_enrich/table.py:125` `def swap_table`,
+`flows/stores_enrich/table.py:135` `def swap_table`,
 `flows/stores_enrich/table.py:105` `def read_current`,
 `flows/stores_enrich/flow.py:43` `MIN_EXPECTED`
 

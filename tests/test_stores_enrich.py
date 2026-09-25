@@ -29,9 +29,9 @@ def store(**overrides) -> EnrichedStore:
         collected_at=NOW,
         source_dt=date(2026, 9, 25),
         b_code=None,
-        region_1depth_name=None,
-        region_2depth_name=None,
-        region_3depth_name=None,
+        sido_name=None,
+        sgg_name=None,
+        umd_name=None,
         geocode_status="failed",
         enriched_at=NOW,
     )
@@ -69,9 +69,9 @@ def test_reusable_only_when_same_coordinates_and_previous_has_code():
 def test_resolve_reuses_without_kakao():
     previous = store(
         b_code="1168010100",
-        region_1depth_name="서울특별시",
-        region_2depth_name="강남구",
-        region_3depth_name="역삼동",
+        sido_name="서울특별시",
+        sgg_name="강남구",
+        umd_name="역삼동",
         geocode_status="ok",
     )
     stop = threading.Event()
@@ -80,7 +80,7 @@ def test_resolve_reuses_without_kakao():
     assert error is None
     assert row.geocode_status == "reused"
     assert row.b_code == "1168010100"
-    assert row.region_3depth_name == "역삼동"
+    assert row.umd_name == "역삼동"
 
 
 def test_resolve_marks_status_when_stopped():
@@ -121,10 +121,10 @@ def test_next_failures_resets_only_when_kakao_answered():
 
 
 def test_mismatched_compares_first_token_of_sigungu():
-    assert not mismatched(store(region_2depth_name="강남구"))
-    assert mismatched(store(region_2depth_name="서초구"))
+    assert not mismatched(store(sgg_name="강남구"))
+    assert mismatched(store(sgg_name="서초구"))
     assert not mismatched(
-        store(address="경기 수원시 영통구 1", region_2depth_name="수원시 영통구")
+        store(address="경기 수원시 영통구 1", sgg_name="수원시 영통구")
     )
-    assert not mismatched(store(address=None, region_2depth_name="강남구"))
-    assert not mismatched(store(region_2depth_name=None))
+    assert not mismatched(store(address=None, sgg_name="강남구"))
+    assert not mismatched(store(sgg_name=None))
