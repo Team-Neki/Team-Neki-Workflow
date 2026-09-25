@@ -63,9 +63,11 @@ class EnrichedStore:
 
     # enrich 가 더하는 것
     b_code: str | None
-    region_1depth_name: str | None
-    region_2depth_name: str | None
-    region_3depth_name: str | None
+    # Kakao 의 region_1/2/3depth_name. 이름은 tb_legal_dong 과 같고 각각 b_code 앞
+    # 2 / 5 / 8 자리(시도, 시군구, 읍면동)에 대응한다. 운영 확인용이다.
+    sido_name: str | None
+    sgg_name: str | None
+    umd_name: str | None
     geocode_status: GeocodeStatus
     enriched_at: datetime
 
@@ -101,9 +103,9 @@ def from_collect(
         collected_at=collected_at,
         source_dt=source_dt,
         b_code=None,
-        region_1depth_name=None,
-        region_2depth_name=None,
-        region_3depth_name=None,
+        sido_name=None,
+        sgg_name=None,
+        umd_name=None,
         geocode_status="failed",
         enriched_at=enriched_at,
     )
@@ -158,9 +160,9 @@ def resolve(
         return replace(
             store,
             b_code=previous.b_code,
-            region_1depth_name=previous.region_1depth_name,
-            region_2depth_name=previous.region_2depth_name,
-            region_3depth_name=previous.region_3depth_name,
+            sido_name=previous.sido_name,
+            sgg_name=previous.sgg_name,
+            umd_name=previous.umd_name,
             geocode_status="reused",
         ), None
 
@@ -210,9 +212,9 @@ def resolve(
     return replace(
         store,
         b_code=document["code"],
-        region_1depth_name=document.get("region_1depth_name") or None,
-        region_2depth_name=document.get("region_2depth_name") or None,
-        region_3depth_name=document.get("region_3depth_name") or None,
+        sido_name=document.get("region_1depth_name") or None,
+        sgg_name=document.get("region_2depth_name") or None,
+        umd_name=document.get("region_3depth_name") or None,
         geocode_status="ok",
         **coordinates,
     ), None
@@ -225,9 +227,9 @@ def mismatched(store: EnrichedStore) -> bool:
     비교이고 주소를 해석하지 않는다. 특례시 일반구("수원시 영통구")는 첫 토큰인
     시 이름으로 비교한다.
     """
-    if not store.address or not store.region_2depth_name:
+    if not store.address or not store.sgg_name:
         return False
-    return store.region_2depth_name.split()[0] not in store.address
+    return store.sgg_name.split()[0] not in store.address
 
 
 def next_failures(

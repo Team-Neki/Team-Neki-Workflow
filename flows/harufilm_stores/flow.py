@@ -69,7 +69,7 @@ def _same_position(stores: list[CollectedStore]) -> list[list[CollectedStore]]:
     같은데 장소 id 가 달라 id 로 합치는 것만으로는 걸러지지 않는다.
 
     합치지는 않는다. 어느 id 를 살릴지는 사이트가 준 값만으로 정할 수 없고 그
-    판단은 enrich 의 일이다. 드러내기만 한다.
+    판단은 collect 의 일이 아니다. 드러내기만 한다.
     """
     positions: dict[tuple[float, float], list[CollectedStore]] = defaultdict(list)
 
@@ -90,7 +90,8 @@ def harufilm_stores(
     """질의 결과를 장소 id 로 합친다. 두 질의에 걸리는 지점이 있어도 중복이 없다.
 
     이름은 Kakao 가 준 그대로 담는다. `크림필터 전포점`에 `하루필름` 접두를
-    붙여 맞추는 것은 해석이므로 enrich 의 일이다.
+    붙여 맞추는 것은 해석이라 collect 의 일이 아니다. 검색용 브랜드·지점명
+    정규화는 서버 batch(index)가 한다.
 
     persist 를 끄면 S3에 적재하지 않는다. 파싱만 확인할 때 쓴다.
 

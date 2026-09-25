@@ -133,7 +133,7 @@ def stores_enrich(
             store.platform,
             store.name,
             store.address,
-            store.region_2depth_name,
+            store.sgg_name,
         )
 
     if len(enriched) < MIN_EXPECTED:

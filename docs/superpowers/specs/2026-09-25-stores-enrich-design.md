@@ -8,6 +8,8 @@
 
 이 문서는 enrich 단계의 경계, 입력과 판정 규칙, 두 산출물의 모양, 색인 Job 실행 계약, 스케줄과 장애 동작에 대해 다룹니다. 정책의 정본은 구현 뒤 `docs/spec/enrich-pipeline.md` 로 옮기며, 이 문서는 그 결정에 이른 이유를 남깁니다.
 
+> **갱신 (2026-09-25, 구현 뒤)**: 색인 Job 은 enrich 안에서 띄우지 않고 별도 flow `search-index` 로 분리했습니다 (`docs/spec/search-index.md`). 색인 Job 절과 `run_index` 서술은 분리 전 설계입니다. 결과 테이블의 `region_1/2/3depth_name` 은 `sido_name / sgg_name / umd_name` 으로 바꿨습니다 (BACKEND-151). 현재 정책은 `docs/spec/enrich-pipeline.md` 가 정본입니다.
+
 ---
 
 ## 1. 배경과 경계

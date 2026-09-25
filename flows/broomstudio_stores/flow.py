@@ -69,7 +69,7 @@ def broomstudio_stores(
 ) -> list[CollectedStore]:
     """질의 결과를 장소 id 로 합친다. 두 질의에 걸리는 지점이 있어도 중복이 없다.
 
-    이름과 주소는 Kakao 가 준 그대로 담는다. 그 해석은 enrich 의 일이다.
+    이름과 주소는 Kakao 가 준 그대로 담는다. 그 해석은 collect 의 일이 아니다.
 
     persist 를 끄면 S3 에 적재하지 않는다. 파싱만 확인할 때 쓴다.
 
