@@ -24,7 +24,7 @@ PREFECT_ENV = PREFECT_API_URL=$(API_URL)
 .DEFAULT_GOAL := help
 .PHONY: help setup check spec-check hello lifefourcuts photoism dontlxxkup photosignature \
 	photogray planbstudio picdot monomansion harufilm photolabplus broomstudio \
-	collect legal-dong subway-station localstack localstack-down s3-init s3-ls \
+	collect enrich search-index legal-dong subway-station localstack localstack-down s3-init s3-ls \
 	serve server deploy build image clean
 
 help: ## 명령 목록을 출력한다
@@ -39,12 +39,13 @@ help: ## 명령 목록을 출력한다
 setup: ## 의존성을 uv.lock 기준으로 설치한다
 	$(UV) sync
 
-check: spec-check ## 임포트와 deployment 수집, spec anchor 를 확인한다
+check: spec-check ## 임포트와 deployment 수집, spec anchor, 단위 테스트를 확인한다
 	@$(UV) run python -c "\
 	from deployments import collect; \
 	found = list(collect()); \
 	print('deployment', len(found), '건'); \
 	[print('  ', d.flow_name + '/' + d.name) for d in found]"
+	@$(UV) run pytest -q tests
 
 # docs/spec 이 정본이다. anchor 가 어긋나면 문서나 코드 중 하나가 낡은 것이다.
 spec-check: ## docs/spec 의 구현 anchor 가 코드 줄과 맞는지 확인한다
@@ -125,6 +126,18 @@ collect: ## 전체 브랜드를 병렬로 수집한다 (KAKAO_API_KEY, S3, DATAB
 	results = stores_collect(); \
 	print('성공', sum(1 for r in results.values() if r['status'] == 'ok'), '건'); \
 	print('합계', sum(r.get('count', 0) for r in results.values()), '건')"
+
+enrich: ## 최신 collect 적재물에 법정동 코드를 붙여 S3 와 Postgres 에 적재한다 (KAKAO_API_KEY, S3, DATABASE_URL 필요)
+	@$(UV) run python -c "\
+	from flows.stores_enrich import stores_enrich; \
+	result = stores_enrich(); \
+	print('보강', result['count'], '건', result['status'])"
+
+search-index: ## 서버 검색 색인 잡을 k8s Job 으로 띄운다 (NEKI_BATCH_IMAGE 없으면 경고 후 끝남)
+	@$(UV) run python -c "\
+	from flows.search_index import search_index; \
+	result = search_index(); \
+	print('색인 실행' if result['launched'] else '색인 건너뜀', result['cycle'])"
 
 subway-station: ## 지하철 역 정보를 수집해 Postgres 에 적재한다 (DATABASE_URL 필요)
 	@$(UV) run python -c "\

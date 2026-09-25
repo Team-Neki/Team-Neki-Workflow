@@ -14,8 +14,9 @@
 ## 범위
 
 다루는 것은 지점 수집(collect)입니다. 브랜드 11개의 지점 목록을 받아 S3 와
-Postgres 에 남기는 데까지입니다. 뒤 단계인 enrich 와 index 는 아직 없으며, 이
-문서는 그 단계들이 지켜야 할 읽기 계약만 정합니다.
+Postgres 에 남기는 데까지입니다. 뒤 단계 enrich 는 `docs/spec/enrich-pipeline.md`
+가 정본이고 index 는 Team-Neki-Server 의 batch 잡입니다. 이 문서는 그 단계들이
+지켜야 할 읽기 계약을 정합니다.
 
 다루지 않는 것은 법정동 코드와 지하철 역 마스터입니다. 별도 flow 이고 S3 를 거치지
 않으며, 규약은 `AGENTS.md` 에 있습니다.
@@ -39,9 +40,9 @@ Postgres 에 남기는 데까지입니다. 뒤 단계인 enrich 와 index 는 �
 ### 좌표 보정만 collect 안에서 합니다
 
 이 경계의 유일한 예외입니다. 좌표가 빈 지점은 수집 flow 안에서 Kakao 주소검색으로
-채웁니다. 좌표가 없으면 그 지점이 색인에서 통째로 빠지는데 enrich 가 아직 없어
-결측이 방치되기 때문입니다. 예외를 유지하는 조건은 셋이고 하나라도 깨지면 예외를
-거둡니다.
+채웁니다. 좌표가 없으면 그 지점이 색인에서 통째로 빠지기 때문입니다. enrich 가
+생긴 뒤에도 유지합니다(BACKEND-64). enrich 의 폴백은 여기서 못 채운 지점만 다시
+시도합니다. 예외를 유지하는 조건은 셋이고 하나라도 깨지면 예외를 거둡니다.
 
 - Kakao 장애가 수집 실패가 되지 않음. 키가 없으면 건너뛰고, 연속 세 번 실패하면
   남은 지점은 조회하지 않음
@@ -76,8 +77,8 @@ imweb 위젯은 범위를 벗어난 페이지가 빈 응답이 아니라 마지�
 구현 : `flows/stores_collect/flow.py:30` `BRANDS`,
 `flows/common/imweb_map.py:180` `def collect_board`,
 `flows/common/imweb_map.py:32` `MAX_PAGES`,
-`flows/common/kakao.py:124` `def search_all`,
-`flows/common/kakao.py:28` `MAX_EXPOSED`
+`flows/common/kakao.py:143` `def search_all`,
+`flows/common/kakao.py:29` `MAX_EXPOSED`
 
 ## 산출물 : S3
 
@@ -105,14 +106,14 @@ s3://<bucket>/
 - raw 객체에 태그 `kind=raw`. lifecycle 은 prefix 나 태그로만 걸리는데 raw 가
   파티션 안에 있어 prefix 로는 못 잡음. 코드는 지우지 않음
 
-구현 : `flows/common/storage.py:67` `COLLECT_PREFIX`,
-`flows/common/storage.py:71` `RAW_DIR`,
-`flows/common/storage.py:73` `RUN_AT_FORMAT`,
-`flows/common/storage.py:112` `def partition`,
-`flows/common/storage.py:162` `def put_stores`,
-`flows/common/storage.py:231` `def put_raw`,
-`flows/common/storage.py:130` `def _content_type`,
-`flows/common/storage.py:261` `Tagging="kind=raw"`
+구현 : `flows/common/storage.py:68` `COLLECT_PREFIX`,
+`flows/common/storage.py:75` `RAW_DIR`,
+`flows/common/storage.py:77` `RUN_AT_FORMAT`,
+`flows/common/storage.py:116` `def partition`,
+`flows/common/storage.py:166` `def put_stores`,
+`flows/common/storage.py:235` `def put_raw`,
+`flows/common/storage.py:134` `def _content_type`,
+`flows/common/storage.py:265` `Tagging="kind=raw"`
 
 ### CSV 계약
 
@@ -126,10 +127,10 @@ CSV 에는 타입도 null 도 없습니다. 수집 단계는 값이 없을 때 �
 `\n` 입니다. 기본값인 CRLF 로 두면 Postgres `COPY` 가 마지막 열에 `\r` 을 붙여
 읽습니다.
 
-구현 : `flows/common/storage.py:77` `COLUMNS`,
-`flows/common/storage.py:90` `FLOAT_COLUMNS`,
-`flows/common/storage.py:148` `def _record`,
-`flows/common/storage.py:266` `def _restore`
+구현 : `flows/common/storage.py:81` `COLUMNS`,
+`flows/common/storage.py:94` `FLOAT_COLUMNS`,
+`flows/common/storage.py:152` `def _record`,
+`flows/common/storage.py:270` `def _restore`
 
 ## 산출물 : manifest 테이블
 
@@ -186,7 +187,7 @@ DB 에 닿는지는 본문을 올리기 전에 확인하고, 행은 본문을 �
 - `DATABASE_URL` 이 없으면 수집 flow 는 시작 직후 실패함. `persist=False` 로 끄면 DB
   없이 파싱만 볼 수 있음
 
-구현 : `flows/common/storage.py:162` `def put_stores`,
+구현 : `flows/common/storage.py:166` `def put_stores`,
 `flows/common/postgres.py:39` `def connect`
 
 ## 대상 일자와 실행 시각
@@ -221,7 +222,7 @@ DB 에 닿는지는 본문을 올리기 전에 확인하고, 행은 본문을 �
 `flows/stores_collect/flow.py:138` `cycle = target_date()`,
 `flows/stores_collect/flow.py:144` `target_date=cycle`,
 `flows/photoism_stores/flow.py:28` `target_date: date | None = None`,
-`flows/common/storage.py:117` `def run_at`
+`flows/common/storage.py:121` `def run_at`
 
 ## 실패한 브랜드는 무엇으로 대신하나
 
@@ -299,13 +300,13 @@ GitOps 의 k8s Secret `prefect-workflow` 가 flow run Job 파드에 넣습니다
 파드가 아닙니다. 코드에 endpoint 나 프로파일 분기를 두지 않습니다. 로컬과 운영의
 차이가 환경변수 하나여야 코드에 분기가 생기지 않습니다.
 
-구현 : `flows/common/kakao.py:40` `def api_key`,
-`flows/common/storage.py:97` `def _bucket`,
-`flows/common/storage.py:107` `def _client`
+구현 : `flows/common/kakao.py:41` `def api_key`,
+`flows/common/storage.py:101` `def _bucket`,
+`flows/common/storage.py:111` `def _client`
 
 ## 읽는 쪽 계약 (enrich, index)
 
-enrich 와 index 는 아직 없습니다. 만들 때 지킬 계약은 셋입니다.
+enrich(`flows/stores_enrich`)가 지키는 계약은 셋입니다.
 
 - 무엇을 읽을지는 `read_cycle(target_date)` 가 정함. 브랜드마다 `status` 와
   manifest 행을 돌려주고, `failed` 는 건너뜀
@@ -316,8 +317,8 @@ enrich 와 index 는 아직 없습니다. 만들 때 지킬 계약은 셋입니�
   기록이 어긋남
 
 구현 : `flows/common/manifest.py:240` `def read_cycle`,
-`flows/common/storage.py:279` `def read_stores`,
-`flows/common/storage.py:136` `def _split_uri`
+`flows/common/storage.py:283` `def read_stores`,
+`flows/common/storage.py:140` `def _split_uri`
 
 ### Athena 를 붙이려면
 
