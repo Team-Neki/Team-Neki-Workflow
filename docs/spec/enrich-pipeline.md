@@ -47,14 +47,15 @@
 - 상태 : `ok` Kakao 응답 / `reused` 재사용 / `no_coordinate` 좌표 없고 폴백 실패 /
   `failed` 좌표는 있으나 Kakao 실패
 - 쓰레드 4개. 조회 하나는 3번까지 다시 해보고 연속 3번 실패하면 남은 지점은 묻지
-  않음. 상수는 `geocode.py` 것을 씀
+  않음. 상수는 `geocode.py` 것을 씀. Kakao 가 답하면 법정동 문서가 없어도 연속
+  실패는 0 으로 돌아감. 재사용과 건너뛴 지점은 Kakao 를 부르지 않아 세지 않음
 - `KAKAO_API_KEY` 가 없으면 재사용만 하고 나머지는 비움. flow 는 완주함
 - task 는 하나. 지점마다 task 를 만들지 않음. 쓰레드 안에서 로그를 남기지 않음
 
 구현 : `flows/common/kakao.py:111` `def coord2regioncode`,
 `flows/stores_enrich/region.py:112` `def reusable`,
 `flows/stores_enrich/region.py:145` `def resolve`,
-`flows/stores_enrich/region.py:234` `def enrich_stores`,
+`flows/stores_enrich/region.py:251` `def enrich_stores`,
 `flows/stores_enrich/region.py:39` `WORKERS`
 
 ## 주소는 해석하지 않는다

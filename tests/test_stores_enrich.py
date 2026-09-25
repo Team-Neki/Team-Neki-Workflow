@@ -8,6 +8,7 @@ from flows.stores_enrich.region import (
     EnrichedStore,
     from_collect,
     mismatched,
+    next_failures,
     resolve,
     reusable,
 )
@@ -105,6 +106,18 @@ def test_resolve_keeps_fallback_coordinates_when_region_lookup_fails(monkeypatch
     assert row.geocode_status == "failed"
     assert row.b_code is None
     assert (row.longitude, row.latitude, row.coordinate_source) == (127.1, 37.6, "kakao")
+
+
+def test_next_failures_resets_only_when_kakao_answered():
+    boom = RuntimeError("kakao down")
+    assert next_failures(2, error=boom, status="failed", skipped=False) == 3
+    # 답은 왔지만 법정동 문서가 없거나 주소검색이 0건. Kakao 는 살아 있다
+    assert next_failures(2, error=None, status="failed", skipped=False) == 0
+    assert next_failures(2, error=None, status="no_coordinate", skipped=False) == 0
+    assert next_failures(2, error=None, status="ok", skipped=False) == 0
+    # Kakao 를 부르지 않은 지점은 근거가 못 된다
+    assert next_failures(2, error=None, status="reused", skipped=False) == 2
+    assert next_failures(2, error=None, status="failed", skipped=True) == 2
 
 
 def test_mismatched_compares_first_token_of_sigungu():

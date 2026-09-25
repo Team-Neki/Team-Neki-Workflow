@@ -230,6 +230,23 @@ def mismatched(store: EnrichedStore) -> bool:
     return store.region_2depth_name.split()[0] not in store.address
 
 
+def next_failures(
+    failures: int, *, error: Exception | None, status: GeocodeStatus, skipped: bool
+) -> int:
+    """연속 실패 수의 다음 값.
+
+    조회가 끝내 실패했으면 하나 는다. Kakao 가 실제로 답했으면 0 이다. 법정동
+    문서가 없어 failed 이거나 주소검색이 0건이라 no_coordinate 여도 Kakao 는 살아
+    있는 것이다. reused 와 stop 뒤에 건너뛴 지점은 Kakao 를 부르지 않았으므로
+    그대로 둔다. 여기서 0 으로 되돌리면 장애를 가린다.
+    """
+    if error is not None:
+        return failures + 1
+    if skipped or status == "reused":
+        return failures
+    return 0
+
+
 @task
 def enrich_stores(stores: list[EnrichedStore], previous: Previous) -> list[EnrichedStore]:
     """전 지점의 법정동을 정해 새 목록을 돌려준다. 입력 순서를 지킨다.
@@ -244,7 +261,8 @@ def enrich_stores(stores: list[EnrichedStore], previous: Previous) -> list[Enric
     logger = get_run_logger()
 
     stop = threading.Event()
-    if not os.environ.get(kakao.API_KEY_ENV):
+    has_key = bool(os.environ.get(kakao.API_KEY_ENV))
+    if not has_key:
         logger.warning(
             "%s 가 없어 Kakao 를 부르지 않습니다. 직전 세대와 좌표가 같은 지점만 채웁니다.",
             kakao.API_KEY_ENV,
@@ -256,17 +274,17 @@ def enrich_stores(stores: list[EnrichedStore], previous: Previous) -> list[Enric
 
     def work(store: EnrichedStore) -> tuple[EnrichedStore, Exception | None]:
         nonlocal failures
+        # resolve 가 stop 을 보기 전에 읽는다. 이미 걸려 있었으면 Kakao 를 부르지
+        # 않은 지점이라 연속 실패를 끊는 근거가 못 된다.
+        skipped = stop.is_set()
         key = (store.platform, store.idx)
         result, error = resolve(store, previous.get(key), stop=stop)
         with lock:
-            if error is not None:
-                failures += 1
-                if failures >= geocode.GIVE_UP_AFTER:
-                    stop.set()
-            elif result.geocode_status == "ok":
-                # Kakao 가 실제로 답한 경우에만 연속 실패를 끊는다. reused 는 Kakao 를
-                # 부르지 않아 장애를 가릴 수 있다.
-                failures = 0
+            failures = next_failures(
+                failures, error=error, status=result.geocode_status, skipped=skipped
+            )
+            if failures >= geocode.GIVE_UP_AFTER:
+                stop.set()
         return result, error
 
     with ThreadPoolExecutor(max_workers=WORKERS) as pool:
@@ -275,10 +293,10 @@ def enrich_stores(stores: list[EnrichedStore], previous: Previous) -> list[Enric
     for store, error in outcomes:
         if error is not None:
             logger.warning("%s %s 법정동 조회 실패: %s", store.platform, store.name, error)
-    if failures >= geocode.GIVE_UP_AFTER:
+    if has_key and stop.is_set():
         logger.error(
             "연속 %d번 실패해 남은 지점은 조회하지 않았습니다. Kakao 상태를 확인하세요.",
-            failures,
+            geocode.GIVE_UP_AFTER,
         )
 
     return [store for store, _ in outcomes]
