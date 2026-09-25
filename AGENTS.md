@@ -680,12 +680,15 @@ make legal-dong
 `ok`, 둘째가 `reused` 인지, `KAKAO_API_KEY` 를 비우고도 완주하는지 봅니다. 적재를
 건드렸다면 테이블이 없는 상태부터 확인하고 두 번 돌려 `tb_photo_booth_enriched`
 와 `_prev` 가 같은 건수인지, 인덱스 이름의 번호가 `1` 을 넘지 않는지 봅니다.
+`psql` 은 `make enrich` 가 읽는 `.env` 의 `DATABASE_URL` 로 붙어야 같은 DB 를
+봅니다. 기본 접속은 다른 DB 일 수 있어 아래 블록 첫 줄이 그 값을 꺼냅니다.
 
 ```bash
-psql -c 'DROP TABLE IF EXISTS tb_photo_booth_enriched, tb_photo_booth_enriched_prev'
+DATABASE_URL=$(sed -n 's/^DATABASE_URL=//p' .env)
+psql "$DATABASE_URL" -c 'DROP TABLE IF EXISTS tb_photo_booth_enriched, tb_photo_booth_enriched_prev'
 make enrich
 make enrich
-psql -c "select geocode_status, count(*) from tb_photo_booth_enriched group by 1"
+psql "$DATABASE_URL" -c "select geocode_status, count(*) from tb_photo_booth_enriched group by 1"
 ```
 
 `search-index` 는 로컬에서 `NEKI_BATCH_IMAGE` 가 없어 경고 후 끝나는 것이
@@ -699,10 +702,11 @@ psql -c "select geocode_status, count(*) from tb_photo_booth_enriched group by 1
 20,561행인지, 인덱스 이름의 번호가 계속 올라가지 않는지 봅니다.
 
 ```bash
-psql -c 'DROP TABLE IF EXISTS tb_legal_dong, tb_legal_dong_prev'
+DATABASE_URL=$(sed -n 's/^DATABASE_URL=//p' .env)
+psql "$DATABASE_URL" -c 'DROP TABLE IF EXISTS tb_legal_dong, tb_legal_dong_prev'
 make legal-dong
 make legal-dong
-psql -c "select tablename, indexname from pg_indexes where tablename like 'tb_legal_dong%'"
+psql "$DATABASE_URL" -c "select tablename, indexname from pg_indexes where tablename like 'tb_legal_dong%'"
 ```
 
 `normalize.py`를 건드렸다면 실행 로그의 "시군구명 분리" 건수가 1,755에서 움직이지
@@ -733,10 +737,11 @@ manifest 테이블을 건드렸다면 **테이블이 없는 상태부터** 확�
 `ensure_table`이 처음 만드는 경로가 따로입니다.
 
 ```bash
-psql -c 'DROP TABLE IF EXISTS tb_store_collect_manifest'
+DATABASE_URL=$(sed -n 's/^DATABASE_URL=//p' .env)
+psql "$DATABASE_URL" -c 'DROP TABLE IF EXISTS tb_store_collect_manifest'
 make collect
 make collect
-psql -c "select platform, count(*) from tb_store_collect_manifest group by 1"
+psql "$DATABASE_URL" -c "select platform, count(*) from tb_store_collect_manifest group by 1"
 ```
 
 브랜드마다 행이 2건이어야 합니다. 1건이면 덮어쓰고 있는 것이고, 인덱스 이름에
