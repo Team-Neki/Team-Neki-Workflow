@@ -8,6 +8,8 @@
 
 **Tech Stack:** Python 3.13, Prefect 3.8.5, prefect-kubernetes 0.7.12 (베이스 이미지와 같은 버전), httpx, psycopg 3, boto3, pytest (dev)
 
+> **갱신 (2026-09-25, 구현 뒤)**: 색인 Job 은 enrich 안에서 띄우지 않고 별도 flow `search-index` 로 분리했습니다 (`docs/spec/search-index.md`). 색인 Job 절과 `run_index` 서술은 분리 전 설계입니다. 결과 테이블의 `region_1/2/3depth_name` 은 `sido_name / sgg_name / umd_name` 으로 바꿨습니다 (BACKEND-151). 현재 정책은 `docs/spec/enrich-pipeline.md` 가 정본입니다.
+
 **Spec:** `docs/superpowers/specs/2026-09-25-stores-enrich-design.md`. 정책 정본은 Task 9 에서 `docs/spec/enrich-pipeline.md` 로 옮긴다.
 
 **Tickets:** BACKEND-64 (이 저장소), BACKEND-143 (GitOps, Task 11). 브랜치 `feature/BACKEND-64-stores-enrich` 는 이미 만들어져 있다.
