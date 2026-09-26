@@ -31,7 +31,7 @@
 - `collected_at` 은 CSV 의 시간대 붙은 ISO 문자열을 KST 벽시계로 바꾸고 시간대를 뗌
 
 구현 : `deployments/stores_enrich.py:25` `schedule=Cron(`,
-`flows/stores_enrich/flow.py:46` `def _read_inputs`,
+`flows/stores_enrich/flow.py:45` `def _read_inputs`,
 `flows/stores_enrich/region.py:82` `def from_collect`
 
 ## 판정
@@ -83,21 +83,14 @@
 구현 : `flows/stores_enrich/region.py:237` `def mismatched`,
 `flows/stores_enrich/table.py:32` `LEGAL_DONG_TABLE`
 
-## 산출물 : S3
+## enrich 결과는 Postgres 에만 저장한다
 
-```text
-enrich/dt=<사이클>/<실행 시각>.csv        e.g. enrich/dt=2026-09-25/2026-09-25_050112.csv
-```
+collect 원본 CSV 는 계속 S3 에서 읽지만 enrich 결과는 S3 에 쓰지 않습니다.
+결과의 유일한 저장소는 `tb_photo_booth_enriched` 이고 flow 반환값에 `s3_path` 는
+없습니다. 기존 S3 enrich 객체는 삭제하지 않습니다. COPY 열 순서는
+`EnrichedStore` 필드 순서가 정본입니다.
 
-- 브랜드 11개가 한 파티션. `platform=` 없음
-- 열은 Postgres 테이블과 같고 순서는 `EnrichedStore` 필드 순서가 정본
-- manifest 행 없음. index 는 Postgres 를 읽고 S3 는 이력과 재실행 원천. 파티션의
-  가장 나중 파일이 그 사이클의 마지막 실행
-- 압축하지 않고 `text/csv; charset=utf-8`. collect 와 같음
-
-구현 : `flows/common/storage.py:71` `ENRICH_PREFIX`,
-`flows/common/storage.py:318` `def put_enriched`,
-`flows/stores_enrich/region.py:76` `COLUMNS = tuple(`
+구현 : `flows/stores_enrich/region.py:76` `COLUMNS = tuple(`
 
 ## 산출물 : Postgres `tb_photo_booth_enriched`
 
@@ -118,7 +111,7 @@ index 가 읽는 현재 세대입니다. 세대 교체는 `tb_legal_dong` 과 �
 구현 : `flows/stores_enrich/table.py:28` `TABLE`,
 `flows/stores_enrich/table.py:135` `def swap_table`,
 `flows/stores_enrich/table.py:105` `def read_current`,
-`flows/stores_enrich/flow.py:43` `MIN_EXPECTED`
+`flows/stores_enrich/flow.py:42` `MIN_EXPECTED`
 
 ## 색인은 별도 flow 가 띄운다
 
@@ -134,14 +127,13 @@ enrich 가 끝나도 색인 Job 을 띄우지 않습니다. 묶으면 enrich 재
 | Postgres | flow 실패. `DATABASE_URL` 이 없으면 시작 직후 `RuntimeError` |
 | S3 (읽기) | 그 브랜드 예외로 flow 실패. 건수 불일치도 같음 |
 | Kakao | 그 지점만 `failed`. 연속 3회면 남은 지점은 묻지 않음. flow 완주 |
-| S3 (쓰기) | 재시도 셋 뒤 flow 실패. 스왑 전이라 테이블 그대로 |
 
 ## 재실행과 백필
 
 - 같은 deployment 를 다시 실행. 재사용 덕에 Kakao 호출이 거의 없음
 - 백필은 `stores_enrich(target_date=<지난 날짜>)`. 그 날짜 이하의 최신 적재물을
-  읽고 파티션과 staging 테이블 이름에 그 날짜가 붙음
-- `persist=False` 는 S3 와 Postgres 에 쓰지 않음. 직전 세대도 안 읽으므로 전
+  읽고 staging 테이블 이름에 그 날짜가 붙음
+- `persist=False` 는 Postgres 에 쓰지 않음. 직전 세대도 안 읽으므로 전
   지점을 Kakao 에 물음
 
 ## 변경 검증
@@ -157,5 +149,5 @@ enrich 가 끝나도 색인 Job 을 띄우지 않습니다. 묶으면 enrich 재
 
 enrich 는 05:00 KST 에 manifest 가 가리키는 브랜드별 최신 CSV 를 읽어 좌표를
 법정동 코드로 바꿉니다. 좌표가 안 바뀐 지점은 직전 답을 재사용하고 Kakao 가
-죽어도 완주합니다. S3 파티션 하나와 Postgres 세대 하나를 남기고 800건 미만이면
+죽어도 완주합니다. Postgres 세대 하나만 남기고 800건 미만이면
 바꿔치우지 않습니다. 색인은 별도 flow `search-index` 가 띄웁니다.

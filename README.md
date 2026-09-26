@@ -86,7 +86,7 @@ s3://<bucket>/
 ## 보강 파이프라인 (enrich)
 
 `stores-enrich` 는 매일 05:00 KST 에 collect 가 남긴 브랜드별 최신 CSV 를 읽어
-Kakao `coord2regioncode` 로 법정동 코드를 붙이고, S3 `enrich/dt=` 파티션과
+Kakao `coord2regioncode` 로 법정동 코드를 붙이고,
 Postgres `tb_photo_booth_enriched` 세대로 남깁니다. 좌표가 직전 세대와 같은
 지점은 Kakao 를 부르지 않습니다. 정책은 `docs/spec/enrich-pipeline.md` 가
 정본입니다.
@@ -279,7 +279,7 @@ make search-index
 ```
 
 `enrich` 는 `collect` 가 남긴 브랜드별 최신 CSV 에 Kakao 로 법정동 코드를 붙여
-`enrich/dt=` 파티션과 `tb_photo_booth_enriched` 테이블에 적재합니다. 두 번 돌리면
+`tb_photo_booth_enriched` 테이블에만 적재합니다. 결과는 S3 에 쓰지 않습니다. 두 번 돌리면
 둘째는 전부 재사용이라 Kakao 를 부르지 않습니다. 정책은
 `docs/spec/enrich-pipeline.md` 에 있습니다. `search-index` 는 로컬에서
 `NEKI_BATCH_IMAGE` 가 없어 경고 후 끝납니다.

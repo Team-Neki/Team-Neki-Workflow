@@ -11,7 +11,7 @@
 - `docs/spec/collect-pipeline.md` : 지점 수집(collect). 산출물 레이아웃, manifest
   테이블, 대상 일자, 대신하기 규칙, 스케줄, 읽는 쪽 계약
 - `docs/spec/enrich-pipeline.md` : 지점 법정동 보강(enrich). 입력, 재사용, 상태,
-  두 산출물
+  Postgres 산출물
 - `docs/spec/search-index.md` : 검색 색인 실행(search-index). 서버 batch 잡을
   k8s Job 으로 띄우는 계약
 
@@ -172,7 +172,8 @@ flow run이 work pool 기본 이미지(베이스 prefect 이미지)로 떠서 `f
 - collect 와 별도 flow. `stores_collect` 안에서 부르지 않음. 합치면 enrich 실패
   재시도가 사이트를 다시 긁음. 순서는 cron 시각(04:00 / 05:00 KST)으로 맞춤
 - 무엇을 읽을지는 `manifest.read_cycle` 이 정함. enrich 가 따로 정하지 않음
-- `EnrichedStore` 의 필드 순서가 CSV 열이자 COPY 열이자 DDL 순서. 필드를 더하면
+- enrich 결과는 Postgres 에만 저장. S3 는 collect 원본을 읽는 용도로만 사용
+- `EnrichedStore` 의 필드 순서가 COPY 열이자 DDL 순서. 필드를 더하면
   `table._ddl` 도 같은 자리에 넣어야 함. 한쪽만 고치면 값이 엉뚱한 컬럼에 들어감
 - 주소도 이름도 해석하지 않음. 계층은 `b_code` 자리수에, 이름은 `tb_legal_dong` 에
   있음. 브랜드·지점명 분리 같은 검색용 정규화는 서버 batch(`SearchNormalizer`)가 함.
