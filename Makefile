@@ -24,7 +24,7 @@ PREFECT_ENV = PREFECT_API_URL=$(API_URL)
 .DEFAULT_GOAL := help
 .PHONY: help setup check spec-check hello lifefourcuts photoism dontlxxkup photosignature \
 	photogray planbstudio picdot monomansion harufilm photolabplus broomstudio \
-	collect enrich search-index legal-dong subway-station localstack localstack-down s3-init s3-ls \
+	collect enrich stores-sync stores-sync-dry-run test-stores-sync-db search-index legal-dong subway-station localstack localstack-down s3-init s3-ls \
 	serve server deploy build image clean
 
 help: ## 명령 목록을 출력한다
@@ -132,6 +132,16 @@ enrich: ## 최신 collect 적재물에 법정동 코드를 붙여 Postgres 에�
 	from flows.stores_enrich import stores_enrich; \
 	result = stores_enrich(); \
 	print('보강', result['count'], '건', result['status'])"
+
+stores-sync: ## 보강 지점을 안정적인 locationId로 동기화한다 (서버 V34, DATABASE_URL 필요)
+	@$(UV) run python -c "from flows.stores_sync import stores_sync; print(stores_sync())"
+
+stores-sync-dry-run: ## 지점 동기화 예상 건수를 확인한다 (DB 쓰기 없음)
+	@$(UV) run python -c "from flows.stores_sync import stores_sync; print(stores_sync(persist=False))"
+
+test-stores-sync-db: ## 전용 PostGIS DB에서 지점 동기화 통합 테스트를 실행한다
+	@test -n "$$STORES_SYNC_TEST_DATABASE_URL" || (echo 'STORES_SYNC_TEST_DATABASE_URL이 필요합니다'; exit 1)
+	@$(UV) run pytest -q tests/test_stores_sync_db.py
 
 search-index: ## 서버 검색 색인 잡을 k8s Job 으로 띄운다 (NEKI_BATCH_IMAGE 없으면 경고 후 끝남)
 	@$(UV) run python -c "\

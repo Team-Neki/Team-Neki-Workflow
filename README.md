@@ -16,6 +16,7 @@ flows/
     flow.py               @flow
     orders.py             @task
   stores_enrich/          법정동 보강. collect 의 최신 CSV 를 읽어 Kakao 로 b_code 를 붙임
+  stores_sync/            지점 마스터 동기화. 원천 키로 locationId 유지, 수동 보정 보존
   search_index/           검색 색인. 서버 batch 의 색인 잡을 k8s Job 으로 띄움
   common/                 여러 워크플로가 함께 쓰는 task
 aws/config                로컬 개발용 AWS 프로파일
@@ -93,6 +94,14 @@ Postgres `tb_photo_booth_enriched` 세대로 남깁니다. 좌표가 직전 세�
 색인은 별도 flow `search-index` 가 띄웁니다. 서버 batch 의 `searchIndexJob` 을
 k8s Job 으로 만들고 종료 코드를 flow 결과로 삼습니다. 정책은
 `docs/spec/search-index.md` 가 정본입니다.
+
+`stores-sync`는 enrich 현재 세대를 지점 마스터에 증분 반영하는 수동 flow입니다.
+`(platform, idx)`로 같은 지점을 갱신하며 `locationId`, 관리자 보정과 노출 설정을
+유지합니다. 서버 Flyway V34 적용이 선행되어야 합니다. `make stores-sync-dry-run`은
+쓰기 없이 예상 건수를 확인하고, `make stores-sync`는 실제 반영합니다.
+정책과 어드민/색인 연결 계약은 [지점 동기화 정책](docs/spec/stores-sync.md)에 있습니다.
+현재 검색 색인은 여전히 enrich를 직접 읽습니다. 단일 지점 원천으로의 서버 전환과
+기존 카카오 수집 중지 전에는 정기 실행하지 않습니다.
 
 ## 네이밍 규약
 
