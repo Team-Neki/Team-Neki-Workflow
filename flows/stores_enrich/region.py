@@ -44,7 +44,7 @@ WORKERS = 4
 class EnrichedStore:
     """enrich 결과 한 행.
 
-    필드 순서가 곧 CSV 열 순서이자 COPY 열 순서다 (COLUMNS). table.py 의 DDL 도
+    필드 순서가 곧 COPY 열 순서다 (COLUMNS). table.py 의 DDL 도
     같은 순서다. 한쪽만 고치면 값이 엉뚱한 컬럼에 들어간다.
 
     시각은 앱 DB 규약대로 시간대 없는 KST 벽시계다.

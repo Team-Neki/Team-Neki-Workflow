@@ -10,8 +10,8 @@ manifest.read_cycle 이 정한다. 브랜드마다 대상 일자 이하의 최�
 7일 넘게 낡은 브랜드는 버린다. 늦게 끝난 collect 는 그날 enrich 에 안 들어가고
 전날 것으로 대신하며 source_dt 가 그것을 드러낸다.
 
-산출물은 둘이다. S3 enrich/dt=<사이클>/<실행 시각>.csv 는 이력과 재실행 원천이고,
-Postgres tb_photo_booth_enriched 는 index(서버 batch)가 읽는 현재 세대다.
+산출물은 Postgres tb_photo_booth_enriched 하나다. index(서버 batch)가 읽는
+현재 세대이며 enrich 결과는 S3 에 쓰지 않는다.
 색인은 여기서 띄우지 않는다. 별도 flow search-index 가 시각으로 뒤에 돌며 그
 시점의 현재 세대를 읽는다. 묶으면 enrich 재시도가 색인을 되풀이하고 색인 실패가
 enrich 를 실패로 만든다.
@@ -26,9 +26,8 @@ from prefect import flow, get_run_logger
 from flows.common.manifest import KST, MAX_STALE_DAYS, ensure_table, read_cycle
 from flows.common.manifest import target_date as cycle_date
 from flows.common.platform import Platform
-from flows.common.storage import put_enriched, read_stores
+from flows.common.storage import read_stores
 from flows.stores_enrich.region import (
-    COLUMNS,
     EnrichedStore,
     enrich_stores,
     from_collect,
@@ -87,10 +86,10 @@ def stores_enrich(
     persist: bool = True,
     max_stale_days: int = MAX_STALE_DAYS,
 ) -> dict[str, Any]:
-    """최신 collect 적재물에 법정동 코드를 붙여 S3 와 Postgres 에 남긴다.
+    """최신 collect 적재물에 법정동 코드를 붙여 Postgres 에만 남긴다.
 
     target_date 는 사이클 날짜다. 비우면 이 run 의 예약 시각(KST)이고 백필은
-    지난 날짜를 준다. persist 를 끄면 S3 와 Postgres 에 쓰지 않는다. 직전 세대도
+    지난 날짜를 준다. persist 를 끄면 Postgres 에 쓰지 않는다. 직전 세대도
     읽지 않으므로 전 지점을 Kakao 에 묻는다.
     """
     logger = get_run_logger()
@@ -150,8 +149,6 @@ def stores_enrich(
     }
     if not persist:
         return result
-
-    result["s3_path"] = put_enriched(enriched, columns=COLUMNS, target_date=cycle)
 
     swapped = swap_table(enriched, cycle=cycle)
     if swapped["unknown_codes"] > 0:
