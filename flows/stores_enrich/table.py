@@ -19,7 +19,7 @@ from dataclasses import astuple
 from datetime import date, datetime
 
 from prefect import get_run_logger, task
-from psycopg import sql
+from psycopg import errors, sql
 
 from flows.common.manifest import KST
 from flows.common.postgres import connect
@@ -65,9 +65,9 @@ CREATE TABLE {staging} (
 
     -- enrich 가 더하는 것
     b_code              CHAR(10),
-    region_1depth_name  VARCHAR(32),
-    region_2depth_name  VARCHAR(32),
-    region_3depth_name  VARCHAR(32),
+    sido_name  VARCHAR(32),
+    sgg_name  VARCHAR(32),
+    umd_name  VARCHAR(32),
     geocode_status      VARCHAR(16)      NOT NULL,
     enriched_at         TIMESTAMP        NOT NULL,
 
@@ -94,9 +94,9 @@ COMMENT ON COLUMN {staging}.coordinate_source IS '좌표 출처. official / kaka
 COMMENT ON COLUMN {staging}.collected_at IS '수집 시각 (KST 벽시계, 시간대 없음)';
 COMMENT ON COLUMN {staging}.source_dt IS '어느 수집 사이클에서 왔나. 오늘이 아니면 그 브랜드는 이전 사이클로 대신한 것';
 COMMENT ON COLUMN {staging}.b_code IS '법정동 코드 10자리 (Kakao coord2regioncode). 실패하면 NULL';
-COMMENT ON COLUMN {staging}.region_1depth_name IS 'Kakao 가 준 시도 이름 (예: 서울특별시). 운영 확인용, 정본은 tb_legal_dong';
-COMMENT ON COLUMN {staging}.region_2depth_name IS 'Kakao 가 준 시군구 이름 (예: 강남구, 수원시 영통구). 운영 확인용';
-COMMENT ON COLUMN {staging}.region_3depth_name IS 'Kakao 가 준 읍면동 이름 (예: 역삼동). 운영 확인용';
+COMMENT ON COLUMN {staging}.sido_name IS 'Kakao 가 준 시도 이름 (예: 서울특별시). b_code 앞 2자리. 운영 확인용, 정본은 tb_legal_dong';
+COMMENT ON COLUMN {staging}.sgg_name IS 'Kakao 가 준 시군구 이름 (예: 강남구, 수원시 영통구). b_code 앞 5자리. 세종은 NULL. 운영 확인용';
+COMMENT ON COLUMN {staging}.umd_name IS 'Kakao 가 준 읍면동 이름 (예: 역삼동). b_code 앞 8자리. 운영 확인용';
 COMMENT ON COLUMN {staging}.geocode_status IS 'ok Kakao 응답 / reused 직전 세대 재사용 / no_coordinate 좌표 없음 / failed 좌표는 있으나 Kakao 실패';
 COMMENT ON COLUMN {staging}.enriched_at IS '보강 시각 (KST 벽시계, 시간대 없음)';
 """
@@ -106,14 +106,24 @@ def read_current() -> dict[tuple[str, str], EnrichedStore]:
     """현재 세대를 (platform, idx) 로 읽는다. 테이블이 없으면 빈 dict.
 
     첫 실행이거나 손으로 지운 뒤라면 없는 것이 정상이다. 그때는 전 지점을
-    Kakao 에 묻는다.
+    Kakao 에 묻는다. 컬럼이 지금 스키마와 다른 세대(컬럼 이름을 바꾸기 전 것)도
+    같게 다룬다. 한 번 전 지점을 물면 다음 세대부터 다시 재사용된다.
     """
+    logger = get_run_logger()
+
     with connect() as connection:
         with connection.cursor() as cursor:
             cursor.execute("SELECT to_regclass(%s)", (TABLE,))
             if cursor.fetchone()[0] is None:
                 return {}
-            cursor.execute(f"SELECT {', '.join(COLUMNS)} FROM {TABLE}")
+            try:
+                cursor.execute(f"SELECT {', '.join(COLUMNS)} FROM {TABLE}")
+            except errors.UndefinedColumn as error:
+                logger.warning(
+                    "%s 의 컬럼이 지금 스키마와 달라 재사용하지 않습니다: %s", TABLE, error
+                )
+                connection.rollback()
+                return {}
             rows = [
                 EnrichedStore(**dict(zip(COLUMNS, values)))
                 for values in cursor.fetchall()

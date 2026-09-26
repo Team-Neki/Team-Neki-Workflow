@@ -216,7 +216,7 @@ def to_store(
         return None
 
     # 도로명 주소가 비어 있는 장소가 있어 지번 주소로 대체한다. 어느 쪽인지
-    # 구분해서 담지는 않는다. 그 해석은 enrich가 맡는다.
+    # 구분해서 담지는 않는다. 그 구분은 collect 의 일이 아니다.
     jibun = (document.get("address_name") or "").strip()
     address = (document.get("road_address_name") or "").strip() or jibun
 
