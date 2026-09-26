@@ -101,25 +101,31 @@ def _lookup(query: str, search: Search) -> tuple[float, float] | None:
     return None
 
 
-def locate(store: CollectedStore) -> Point | None:
+def locate(
+    store: CollectedStore,
+    *,
+    lookup: Callable[[str, Search], tuple[float, float] | None] | None = None,
+) -> Point | None:
     """지점 하나의 좌표를 찾는다. 못 찾으면 None 이다.
 
     주소검색을 먼저 두는 이유는 질의가 주소 하나로 닫혀 있어 엉뚱한 가게를 집을
     일이 없기 때문이다. 키워드검색은 그러지 못하므로, 주소가 손으로 적혀 있어
     주소검색이 0건을 주는 지점의 폴백으로만 쓴다.
     """
+    # enrich는 이 경계에서 실제 호출·응답 여부를 추적한다. collect의 기본 경로는 같다.
+    lookup = lookup or _lookup
     address = (store.address or "").strip()
 
     if address:
-        found = _lookup(address, kakao.search_address)
+        found = lookup(address, kakao.search_address)
         if found:
             return found[0], found[1], "kakao_address"
 
-    name = store.name.strip()
+    name = (store.name or "").strip()
     if not name:
         return None
 
-    found = _lookup(f"{region(address)} {name}".strip(), kakao.search_keyword)
+    found = lookup(f"{region(address)} {name}".strip(), kakao.search_keyword)
     if found:
         return found[0], found[1], "kakao_keyword"
 

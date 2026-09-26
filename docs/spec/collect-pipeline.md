@@ -14,8 +14,9 @@
 ## 범위
 
 다루는 것은 지점 수집(collect)입니다. 브랜드 11개의 지점 목록을 받아 S3 와
-Postgres 에 남기는 데까지입니다. 뒤 단계인 enrich 와 index 는 아직 없으며, 이
-문서는 그 단계들이 지켜야 할 읽기 계약만 정합니다.
+Postgres 에 남기는 데까지입니다. 뒤 단계 enrich 는 `docs/spec/enrich-pipeline.md`
+가 정본이고 index 는 Team-Neki-Server 의 batch 잡입니다. 이 문서는 그 단계들이
+지켜야 할 읽기 계약을 정합니다.
 
 다루지 않는 것은 법정동 코드와 지하철 역 마스터입니다. 별도 flow 이고 S3 를 거치지
 않으며, 규약은 `AGENTS.md` 에 있습니다.
@@ -39,9 +40,9 @@ Postgres 에 남기는 데까지입니다. 뒤 단계인 enrich 와 index 는 �
 ### 좌표 보정만 collect 안에서 합니다
 
 이 경계의 유일한 예외입니다. 좌표가 빈 지점은 수집 flow 안에서 Kakao 주소검색으로
-채웁니다. 좌표가 없으면 그 지점이 색인에서 통째로 빠지는데 enrich 가 아직 없어
-결측이 방치되기 때문입니다. 예외를 유지하는 조건은 셋이고 하나라도 깨지면 예외를
-거둡니다.
+채웁니다. 좌표가 없으면 그 지점이 색인에서 통째로 빠지기 때문입니다. enrich 가
+생긴 뒤에도 유지합니다(BACKEND-64). enrich 의 폴백은 여기서 못 채운 지점만 다시
+시도합니다. 예외를 유지하는 조건은 셋이고 하나라도 깨지면 예외를 거둡니다.
 
 - Kakao 장애가 수집 실패가 되지 않음. 키가 없으면 건너뛰고, 연속 세 번 실패하면
   남은 지점은 조회하지 않음
@@ -52,7 +53,7 @@ Postgres 에 남기는 데까지입니다. 뒤 단계인 enrich 와 index 는 �
 주소는 원문 그대로 질의에 넣고, 0건이면 `<주소 앞 2토큰> <상호명>` 으로 한 번 더
 묻습니다. 키워드검색을 먼저 쓰지 않는 이유는 전국의 동명 가게를 집을 수 있어서입니다.
 
-구현 : `flows/common/geocode.py:130` `def fill_coordinates`,
+구현 : `flows/common/geocode.py:136` `def fill_coordinates`,
 `flows/common/geocode.py:43` `GIVE_UP_AFTER`,
 `flows/common/geocode.py:30` `REGION_TOKENS`,
 `flows/common/store.py:47` `coordinate_source`
@@ -76,8 +77,8 @@ imweb 위젯은 범위를 벗어난 페이지가 빈 응답이 아니라 마지�
 구현 : `flows/stores_collect/flow.py:30` `BRANDS`,
 `flows/common/imweb_map.py:180` `def collect_board`,
 `flows/common/imweb_map.py:32` `MAX_PAGES`,
-`flows/common/kakao.py:124` `def search_all`,
-`flows/common/kakao.py:28` `MAX_EXPOSED`
+`flows/common/kakao.py:143` `def search_all`,
+`flows/common/kakao.py:29` `MAX_EXPOSED`
 
 ## 산출물 : S3
 
@@ -299,13 +300,13 @@ GitOps 의 k8s Secret `prefect-workflow` 가 flow run Job 파드에 넣습니다
 파드가 아닙니다. 코드에 endpoint 나 프로파일 분기를 두지 않습니다. 로컬과 운영의
 차이가 환경변수 하나여야 코드에 분기가 생기지 않습니다.
 
-구현 : `flows/common/kakao.py:40` `def api_key`,
+구현 : `flows/common/kakao.py:41` `def api_key`,
 `flows/common/storage.py:97` `def _bucket`,
 `flows/common/storage.py:107` `def _client`
 
 ## 읽는 쪽 계약 (enrich, index)
 
-enrich 와 index 는 아직 없습니다. 만들 때 지킬 계약은 셋입니다.
+enrich(`flows/stores_enrich`)가 지키는 계약은 셋입니다.
 
 - 무엇을 읽을지는 `read_cycle(target_date)` 가 정함. 브랜드마다 `status` 와
   manifest 행을 돌려주고, `failed` 는 건너뜀

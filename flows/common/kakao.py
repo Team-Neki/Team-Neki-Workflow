@@ -20,6 +20,7 @@ from flows.common.store import CollectedStore
 
 SEARCH_URL = "https://dapi.kakao.com/v2/local/search/keyword.json"
 ADDRESS_URL = "https://dapi.kakao.com/v2/local/search/address.json"
+REGION_URL = "https://dapi.kakao.com/v2/local/geo/coord2regioncode.json"
 
 API_KEY_ENV = "KAKAO_API_KEY"
 
@@ -105,6 +106,24 @@ def search_keyword(query: str, *, timeout: float = 20.0) -> list[dict[str, Any]]
     """
     payload = get(SEARCH_URL, {"query": query, "size": 1}, timeout=timeout)
     return payload.get("documents") or []
+
+
+def coord2regioncode(
+    longitude: float, latitude: float, *, timeout: float = 20.0
+) -> dict[str, Any] | None:
+    """좌표가 속한 법정동 문서 하나. 바다처럼 행정구역이 없으면 None.
+
+    응답에는 법정동(B)과 행정동(H) 문서가 같이 오는데 검색이 쓰는 것은 법정동
+    코드라 B 만 돌려준다. 문서의 code 가 10자리 법정동 코드이고
+    region_1depth_name 부터 3depth 까지가 시도, 시군구, 읍면동 이름이다.
+
+    search_address 와 같은 이유로 @task 로 감싸지 않는다. 지점 수만큼 호출된다.
+    """
+    payload = get(REGION_URL, {"x": longitude, "y": latitude}, timeout=timeout)
+    for document in payload.get("documents") or []:
+        if document.get("region_type") == "B":
+            return document
+    return None
 
 
 def _drain(query: str, rect: Rect, meta: dict[str, Any]) -> list[dict[str, Any]]:

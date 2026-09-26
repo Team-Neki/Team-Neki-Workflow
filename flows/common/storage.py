@@ -5,7 +5,7 @@ boto3 기본 자격증명 체인만 쓴다. endpoint나 프로파일을 코드�
 k8s Secret 이 넣는 자격증명이 실제 S3를 가리킨다. 이관은 환경변수 교체로 끝나며
 코드는 바뀌지 않는다.
 
-레이아웃은 이것 하나다.
+S3 에는 collect 원본만 저장한다. enrich 결과는 Postgres 에만 저장한다.
 
     collect/platform=<브랜드>/dt=<대상 일자>/<실행 시각>.csv
     collect/platform=<브랜드>/dt=<대상 일자>/_raw/<실행 시각>/<이름>
