@@ -24,8 +24,10 @@ Job 은 flow run 과 같은 네임스페이스에 뜬다. flow run 파드의 SA 
 """
 
 import os
+import re
 from datetime import date
 from typing import Any
+from uuid import uuid4
 
 from prefect import get_run_logger, task
 from prefect_kubernetes.credentials import KubernetesCredentials
@@ -57,11 +59,15 @@ def manifest(image: str, cycle: date, *, run_at: str) -> dict[str, Any]:
     generateName 은 못 쓴다. 실행 시각(YYYY-MM-DD_HHMMSS)의 밑줄은 k8s 이름에
     허용되지 않아 하이픈으로 바꾼다.
     """
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}_\d{6}", run_at) is None:
+        raise ValueError("run_at은 YYYY-MM-DD_HHMMSS 형식이어야 합니다.")
+    # 초 단위 시각이 같아도 실행마다 이름이 다르다. 전체 길이는 63자다.
+    name = f"search-index-{run_at.replace('_', '-')}-{uuid4().hex}"
     return {
         "apiVersion": "batch/v1",
         "kind": "Job",
         "metadata": {
-            "name": f"search-index-{run_at.replace('_', '-')}",
+            "name": name,
             "namespace": NAMESPACE,
         },
         "spec": {

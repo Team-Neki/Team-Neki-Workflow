@@ -33,6 +33,7 @@ from flows.common.platform import Platform
 from flows.common.store import CollectedStore
 
 GeocodeStatus = Literal["ok", "reused", "no_coordinate", "failed"]
+LookupStatus = Literal["not_called", "responded", "failed"]
 
 # 동시에 보내는 조회 수. QPS 가 미공개라 낮게 잡는다. 재사용이 대부분을 걸러
 # 하루 호출이 변경분 수십 건이라 이 값이 실행 시간을 좌우하지 않는다.
@@ -94,7 +95,7 @@ def from_collect(
     return EnrichedStore(
         platform=record["platform"],
         idx=record["idx"],
-        name=record["name"],
+        name=record["name"] or "",
         address=record.get("address"),
         phone=record.get("phone"),
         longitude=record.get("longitude"),
@@ -146,7 +147,7 @@ def _retry(call: Callable[[], Any]) -> Any:
 
 def resolve(
     store: EnrichedStore, previous: EnrichedStore | None, *, stop: threading.Event
-) -> tuple[EnrichedStore, Exception | None]:
+) -> tuple[EnrichedStore, Exception | None, LookupStatus]:
     """지점 하나의 법정동을 정한다. 조회가 끝내 실패하면 그 예외를 행과 함께 돌려준다.
 
     예외를 올리지 않고 돌려주는 이유는 폴백 좌표 때문이다. 좌표가 없던 지점이
@@ -164,7 +165,7 @@ def resolve(
             sgg_name=previous.sgg_name,
             umd_name=previous.umd_name,
             geocode_status="reused",
-        ), None
+        ), None, "not_called"
 
     longitude, latitude = store.longitude, store.latitude
     coordinate_source = store.coordinate_source
@@ -172,7 +173,19 @@ def resolve(
 
     if stop.is_set():
         status = "no_coordinate" if missing else "failed"
-        return replace(store, geocode_status=status), None
+        return replace(store, geocode_status=status), None, "not_called"
+
+    lookup_status: LookupStatus = "not_called"
+
+    def lookup(query: str, search: geocode.Search) -> tuple[float, float] | None:
+        nonlocal lookup_status
+        try:
+            point = geocode._lookup(query, search)
+        except Exception:
+            lookup_status = "failed"
+            raise
+        lookup_status = "responded"
+        return point
 
     if missing:
         # collect 가 못 채운 좌표를 한 번 더 찾는다. 수집 때 Kakao 가 죽어 있던
@@ -184,12 +197,13 @@ def resolve(
                     idx=store.idx,
                     name=store.name,
                     address=store.address,
-                )
+                ),
+                lookup=lookup,
             )
         except Exception as error:
-            return replace(store, geocode_status="no_coordinate"), error
+            return replace(store, geocode_status="no_coordinate"), error, lookup_status
         if found is None:
-            return replace(store, geocode_status="no_coordinate"), None
+            return replace(store, geocode_status="no_coordinate"), None, lookup_status
         longitude, latitude, _ = found
         coordinate_source = "kakao"
 
@@ -205,9 +219,9 @@ def resolve(
             )
         )
     except Exception as error:
-        return replace(store, geocode_status="failed", **coordinates), error
+        return replace(store, geocode_status="failed", **coordinates), error, "failed"
     if document is None:
-        return replace(store, geocode_status="failed", **coordinates), None
+        return replace(store, geocode_status="failed", **coordinates), None, "responded"
 
     return replace(
         store,
@@ -217,7 +231,7 @@ def resolve(
         umd_name=document.get("region_3depth_name") or None,
         geocode_status="ok",
         **coordinates,
-    ), None
+    ), None, "responded"
 
 
 def mismatched(store: EnrichedStore) -> bool:
@@ -233,7 +247,7 @@ def mismatched(store: EnrichedStore) -> bool:
 
 
 def next_failures(
-    failures: int, *, error: Exception | None, status: GeocodeStatus, skipped: bool
+    failures: int, *, lookup_status: LookupStatus
 ) -> int:
     """연속 실패 수의 다음 값.
 
@@ -242,11 +256,11 @@ def next_failures(
     있는 것이다. reused 와 stop 뒤에 건너뛴 지점은 Kakao 를 부르지 않았으므로
     그대로 둔다. 여기서 0 으로 되돌리면 장애를 가린다.
     """
-    if error is not None:
+    if lookup_status == "failed":
         return failures + 1
-    if skipped or status == "reused":
-        return failures
-    return 0
+    if lookup_status == "responded":
+        return 0
+    return failures
 
 
 @task
@@ -276,14 +290,11 @@ def enrich_stores(stores: list[EnrichedStore], previous: Previous) -> list[Enric
 
     def work(store: EnrichedStore) -> tuple[EnrichedStore, Exception | None]:
         nonlocal failures
-        # resolve 가 stop 을 보기 전에 읽는다. 이미 걸려 있었으면 Kakao 를 부르지
-        # 않은 지점이라 연속 실패를 끊는 근거가 못 된다.
-        skipped = stop.is_set()
         key = (store.platform, store.idx)
-        result, error = resolve(store, previous.get(key), stop=stop)
+        result, error, lookup_status = resolve(store, previous.get(key), stop=stop)
         with lock:
             failures = next_failures(
-                failures, error=error, status=result.geocode_status, skipped=skipped
+                failures, lookup_status=lookup_status
             )
             if failures >= geocode.GIVE_UP_AFTER:
                 stop.set()
