@@ -127,7 +127,7 @@ collect: ## 전체 브랜드를 병렬로 수집한다 (KAKAO_API_KEY, S3, DATAB
 	print('성공', sum(1 for r in results.values() if r['status'] == 'ok'), '건'); \
 	print('합계', sum(r.get('count', 0) for r in results.values()), '건')"
 
-enrich: ## 최신 collect 적재물에 법정동 코드를 붙여 S3 와 Postgres 에 적재한다 (KAKAO_API_KEY, S3, DATABASE_URL 필요)
+enrich: ## 최신 collect 적재물에 법정동 코드를 붙여 Postgres 에만 적재한다 (KAKAO_API_KEY, S3 읽기, DATABASE_URL 필요)
 	@$(UV) run python -c "\
 	from flows.stores_enrich import stores_enrich; \
 	result = stores_enrich(); \

@@ -1,5 +1,9 @@
 # 지점 법정동 보강(enrich) flow 설계
 
+> 이 문서는 최초 설계 기록입니다. BACKEND-154에서 enrich 결과의 S3 저장을
+> 제거했습니다. 현재 결과는 Postgres에만 저장하며 색인은 별도 flow로 실행합니다.
+> 최신 계약은 `docs/spec/enrich-pipeline.md`와 `docs/spec/search-index.md`가 정본입니다.
+
 - **작성일**: 2026-09-25
 - **티켓**: BACKEND-64 (에픽 BACKEND-40 파이프라인 설계). 클러스터 쪽 준비는 BACKEND-143 (GitOps, 같은 에픽)
 - **브랜치**: `feature/BACKEND-64-stores-enrich`

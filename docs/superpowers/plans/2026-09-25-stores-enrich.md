@@ -1,5 +1,9 @@
 # 지점 법정동 보강(enrich) flow 구현 계획
 
+> 이 문서는 최초 구현 계획 기록입니다. BACKEND-154에서 Task 5의 enrich S3
+> 저장과 flow의 해당 호출을 제거했습니다. 현재 결과는 Postgres에만 저장하며
+> 최신 계약은 `docs/spec/enrich-pipeline.md`가 정본입니다.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** collect 가 남긴 지점 좌표에 Kakao `coord2regioncode` 로 법정동 코드를 붙여 S3 `enrich/dt=` 파티션과 Postgres `tb_photo_booth_enriched` 세대로 남기고, 끝나면 서버 batch 의 색인 잡을 k8s Job 으로 띄우는 `stores-enrich` flow 를 만든다.
