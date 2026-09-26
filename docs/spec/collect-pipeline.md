@@ -53,7 +53,7 @@ Postgres 에 남기는 데까지입니다. 뒤 단계 enrich 는 `docs/spec/enri
 주소는 원문 그대로 질의에 넣고, 0건이면 `<주소 앞 2토큰> <상호명>` 으로 한 번 더
 묻습니다. 키워드검색을 먼저 쓰지 않는 이유는 전국의 동명 가게를 집을 수 있어서입니다.
 
-구현 : `flows/common/geocode.py:130` `def fill_coordinates`,
+구현 : `flows/common/geocode.py:136` `def fill_coordinates`,
 `flows/common/geocode.py:43` `GIVE_UP_AFTER`,
 `flows/common/geocode.py:30` `REGION_TOKENS`,
 `flows/common/store.py:47` `coordinate_source`
