@@ -23,6 +23,7 @@ Job 은 flow run 과 같은 네임스페이스에 뜬다. flow run 파드의 SA 
 로그가 원인이고 ttlSecondsAfterFinished 가 하루 뒤 치운다.
 """
 
+import asyncio
 import os
 import re
 from datetime import date
@@ -31,7 +32,7 @@ from uuid import uuid4
 
 from prefect import get_run_logger, task
 from prefect_kubernetes.credentials import KubernetesCredentials
-from prefect_kubernetes.jobs import KubernetesJob
+from prefect_kubernetes.jobs import KubernetesJob, KubernetesJobRun
 
 IMAGE_ENV = "NEKI_BATCH_IMAGE"
 
@@ -113,11 +114,17 @@ def manifest(image: str, cycle: date, *, run_at: str) -> dict[str, Any]:
     }
 
 
+async def _wait_for_completion(run: KubernetesJobRun) -> None:
+    """Pod 생성 전과 로그 읽기를 포함한 대기 전체를 실제 경과 시간으로 제한한다."""
+    async with asyncio.timeout(TIMEOUT_SECONDS):
+        await run.await_for_completion(print_func=print)
+
+
 @task
 def run_search_index(cycle: date, *, run_at: str) -> bool:
     """색인 Job 을 띄우고 끝나기를 기다린다. 띄웠으면 True, 이미지가 없어 건너뛰면 False.
 
-    Job 이 실패하면 wait_for_completion 이 RuntimeError 를 올려 flow 가 실패한다.
+    Job 실패는 RuntimeError, 대기 시간 초과는 TimeoutError 로 flow 가 실패한다.
     그것이 계약이다. 재시도를 붙이지 않는다. 색인은 멱등이라 flow 를 다시 돌리면
     된다.
     """
@@ -144,7 +151,7 @@ def run_search_index(cycle: date, *, run_at: str) -> bool:
 
     run = job.trigger()
     # 파드 로그를 줄 단위로 print 해 flow 로그(log_prints)에 남긴다.
-    run.wait_for_completion(print_func=print)
+    asyncio.run(_wait_for_completion(run))
 
     logger.info("색인 Job 완료: %s", name)
     return True
