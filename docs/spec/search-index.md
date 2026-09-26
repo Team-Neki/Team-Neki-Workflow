@@ -47,13 +47,17 @@ flow 실패입니다. 환경변수가 없으면 경고 후 끝납니다. 로컬�
   다시 돌려서
 - 완료된 Job 은 지우지 않고 `ttlSecondsAfterFinished` 로 하루 뒤 정리. 실패 파드의
   로그가 원인임. 성공한 파드의 로그는 대기 중에 읽어 flow 로그에 남김
-- 타임아웃 1,800초. 파드가 안 뜨는 경우(이미지 없음)에 무한정 기다리지 않게
+- 대기 전체에 실제 경과 시간 기준 타임아웃 1,800초를 적용합니다. Pod가 아직
+  생성되지 않은 상태와 로그 읽기도 포함합니다. prefect-kubernetes 0.7.12의
+  내부 타이머는 active Pod가 없으면 늘지 않으므로 비동기 대기를 별도 타이머로
+  감쌉니다. 타임아웃은 flow 실패로 전파하며 Job은 삭제하지 않습니다.
 - flow run 파드는 SA `prefect-worker`. base job template 기본값이라 deployment 는
   지정하지 않음. Role 이 jobs 생성과 pods/log 조회를 허용함
 
-구현 : `flows/search_index/job.py:36` `IMAGE_ENV`,
-`flows/search_index/job.py:55` `def manifest`,
-`flows/search_index/job.py:117` `def run_search_index`
+구현 : `flows/search_index/job.py:37` `IMAGE_ENV`,
+`flows/search_index/job.py:56` `def manifest`,
+`flows/search_index/job.py:117` `async def _wait_for_completion`,
+`flows/search_index/job.py:124` `def run_search_index`
 
 ## 외부 의존과 장애
 
