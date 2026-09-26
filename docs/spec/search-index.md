@@ -37,8 +37,10 @@ flow 실패입니다. 환경변수가 없으면 경고 후 끝납니다. 로컬�
 
 - 이미지는 GitOps `overlays/prefect/images.env` (ConfigMap `neki-images`, BACKEND-143).
   Team-Neki-Server 의 deploy-batch 가 그 줄을 갱신함
-- Job 이름은 `search-index-<실행 시각>`. prefect-kubernetes 가 `metadata.name` 으로
-  상태를 읽으므로 `generateName` 은 못 씀. 실행 시각의 밑줄은 하이픈으로
+- Job 이름은 `search-index-<실행 시각>-<UUID hex>`. 같은 초의 실행도 다른 이름입니다.
+  prefect-kubernetes 가 `metadata.name` 으로 상태를 읽으므로 `generateName` 은 못 씁니다.
+  실행 시각은 YYYY-MM-DD_HHMMSS 형식만 허용하고 밑줄을 하이픈으로 바꿉니다.
+  UUID 32자리를 포함한 이름 길이는 63자입니다.
 - env 는 `TZ`, 그리고 Secret `prefect-workflow` 의 `SPRING_PROFILES_ACTIVE`,
   `JASYPT_PASSWORD` 둘만. Secret 을 통째로 넘기지 않음
 - `backoffLimit 0`, `restartPolicy Never`. 재시도는 k8s 가 아니라 사람이 flow 를
@@ -49,9 +51,9 @@ flow 실패입니다. 환경변수가 없으면 경고 후 끝납니다. 로컬�
 - flow run 파드는 SA `prefect-worker`. base job template 기본값이라 deployment 는
   지정하지 않음. Role 이 jobs 생성과 pods/log 조회를 허용함
 
-구현 : `flows/search_index/job.py:34` `IMAGE_ENV`,
-`flows/search_index/job.py:53` `def manifest`,
-`flows/search_index/job.py:111` `def run_search_index`
+구현 : `flows/search_index/job.py:36` `IMAGE_ENV`,
+`flows/search_index/job.py:55` `def manifest`,
+`flows/search_index/job.py:117` `def run_search_index`
 
 ## 외부 의존과 장애
 
