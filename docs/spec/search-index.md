@@ -23,10 +23,13 @@ enrich flow 끝에서 색인을 부르지 않습니다. 묶으면 enrich 재시�
 - 스케줄은 BACKEND-65 가 들어올 때 `Cron("30 5 * * *", timezone="Asia/Seoul")`
   로 붙임. 그 전에 정기로 돌리면 없는 잡 이름으로 종료 코드 1 이라 매일 실패함.
   스케줄이 없어도 UI 실행 버튼과 `prefect deployment run` 으로 띄울 수 있음
+- 동시 실행은 `concurrency_limit=1` 로 막음. 서버 잡은 build 와 swap 이 다른
+  트랜잭션이라 두 실행의 build 가 swap 보다 먼저 끝나면 두 번째 swap 이 첫 번째를
+  되돌려 직전 세대를 서빙하고, 둘 다 COMPLETED 라 알림도 없음
 
 구현 : `flows/search_index/flow.py:25` `def search_index`,
 `flows/search_index/flow.py:33` `cycle = target_date or cycle_date()`,
-`deployments/search_index.py:21` `to_deployment(name="search-index")`
+`deployments/search_index.py:25` `to_deployment(name="search-index", concurrency_limit=1)`
 
 ## Job 계약
 
@@ -51,13 +54,17 @@ flow 실패입니다. 환경변수가 없으면 경고 후 끝납니다. 로컬�
   생성되지 않은 상태와 로그 읽기도 포함합니다. prefect-kubernetes 0.7.12의
   내부 타이머는 active Pod가 없으면 늘지 않으므로 비동기 대기를 별도 타이머로
   감쌉니다. 타임아웃은 flow 실패로 전파하며 Job은 삭제하지 않습니다.
+- Job 에도 `activeDeadlineSeconds` 1,800초를 둡니다. flow 가 타임아웃으로 끝나면
+  concurrency 슬롯이 비므로, 남은 Job 이 계속 돌면 재실행한 Job 과 겹칩니다.
+  같은 상한에서 k8s 가 파드를 끝냅니다. swap 도중에 끝나도 트랜잭션이 롤백돼
+  서빙 중 테이블은 그대로입니다
 - flow run 파드는 SA `prefect-worker`. base job template 기본값이라 deployment 는
   지정하지 않음. Role 이 jobs 생성과 pods/log 조회를 허용함
 
 구현 : `flows/search_index/job.py:37` `IMAGE_ENV`,
 `flows/search_index/job.py:56` `def manifest`,
-`flows/search_index/job.py:117` `async def _wait_for_completion`,
-`flows/search_index/job.py:124` `def run_search_index`
+`flows/search_index/job.py:120` `async def _wait_for_completion`,
+`flows/search_index/job.py:127` `def run_search_index`
 
 ## 외부 의존과 장애
 

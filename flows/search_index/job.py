@@ -73,6 +73,9 @@ def manifest(image: str, cycle: date, *, run_at: str) -> dict[str, Any]:
         },
         "spec": {
             "backoffLimit": 0,
+            # flow 가 타임아웃으로 끝나도 Job 은 남는다. 그 사이 flow 를 다시 돌리면
+            # concurrency_limit 슬롯은 비어 있어 두 Job 이 겹친다. 같은 상한에서 k8s 가 파드를 끝낸다.
+            "activeDeadlineSeconds": TIMEOUT_SECONDS,
             "ttlSecondsAfterFinished": FINISHED_JOB_TTL,
             "template": {
                 "spec": {

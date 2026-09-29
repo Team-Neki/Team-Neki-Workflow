@@ -5,7 +5,8 @@ import re
 
 import pytest
 
-from flows.search_index.job import manifest
+from deployments.search_index import build
+from flows.search_index.job import TIMEOUT_SECONDS, manifest
 
 
 def test_manifest_name_is_a_valid_k8s_name_and_args_follow_the_contract():
@@ -19,6 +20,7 @@ def test_manifest_name_is_a_valid_k8s_name_and_args_follow_the_contract():
         "businessDate=2026-09-25",
     ]
     assert m["spec"]["backoffLimit"] == 0
+    assert m["spec"]["activeDeadlineSeconds"] == TIMEOUT_SECONDS
     assert {e["name"] for e in container["env"]} == {
         "TZ",
         "SPRING_PROFILES_ACTIVE",
@@ -38,3 +40,9 @@ def test_same_second_runs_get_distinct_job_names():
 def test_invalid_run_timestamp_is_rejected(run_at):
     with pytest.raises(ValueError, match="run_at"):
         manifest("image", date(2026, 9, 25), run_at=run_at)
+
+
+def test_deployment_is_serial():
+    deployment = build()
+    assert deployment.name == "search-index"
+    assert deployment.concurrency_limit == 1
