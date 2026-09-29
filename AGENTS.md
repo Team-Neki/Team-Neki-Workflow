@@ -212,10 +212,13 @@ flow run이 work pool 기본 이미지(베이스 prefect 이미지)로 떠서 `f
 바꿀 수 있어 편하지만 설정이 Prefect 서버 상태에 얹히므로 서버를 갈아치우거나
 다른 환경에서 같은 flow를 돌릴 때 값이 따라오지 않습니다.
 
-DDL은 `flows/legal_dong/table.py`가 들고 있습니다. 원래 스키마 주인은
-Team-Neki-Server의 Flyway이고 `TB_` 접두와 `COMMENT ON`은 그쪽 규약을 따른
-것입니다. Spring이 이 테이블에 엔티티를 붙일 때는 DDL을 마이그레이션으로 떠가면
-됩니다.
+**DDL은 `flows/legal_dong/table.py`가 소유합니다.** 매월 새 테이블을 만들어 이름을
+바꿔 끼우므로 Team-Neki-Server의 Flyway로 이 테이블을 만들거나 바꾸지 않습니다.
+Flyway에 `CREATE TABLE`을 넣으면 이미 있는 테이블 때문에 마이그레이션이 실패하고,
+`ALTER`로 바꾼 것은 다음 바꿔치기에서 사라집니다. Server는 마이그레이션 없이
+`@Immutable` 엔티티로 읽기만 합니다. 스키마를 바꿀 때는 이 파일을 고치고 Server
+엔티티를 같이 맞춥니다. 서버 Flyway가 스키마를 맡는 지점 테이블(`stores_sync`)과
+반대입니다. `TB_` 접두와 `COMMENT ON`은 Server의 명명 규약을 따른 것입니다.
 
 수집원은 공공데이터포털의 국토교통부 전국 법정동(`15063424`)입니다. 인증이 필요
 없고 utf-8 CSV 1.4MB에 20,561행이 옵니다. 행안부 법정동코드 **API(`15077871`)는
@@ -506,7 +509,8 @@ WHERE ST_DWithin(b.location, s.location, 0.012)            -- 인덱스가 타�
 `::geography`로 캐스팅하면 미터가 바로 나오지만 기존 geometry GiST 를 못 씁니다.
 
 적재는 법정동과 같은 테이블 바꿔치기입니다. 같은 마스터라서가 아니라 매 실행이 전량
-스냅샷이라 같은 답이 나옵니다.
+스냅샷이라 같은 답이 나옵니다. 그래서 DDL도 법정동처럼
+`flows/subway_station/table.py`가 소유하고 Server Flyway는 이 테이블을 건드리지 않습니다.
 
 ## build() 규약
 
