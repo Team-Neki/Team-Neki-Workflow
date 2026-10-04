@@ -88,7 +88,7 @@ def _comments(staging: str) -> str:
     return f"""
 COMMENT ON COLUMN {staging}.platform IS '브랜드 (flows.common.platform.Platform)';
 COMMENT ON COLUMN {staging}.idx IS '사이트가 준 지점 식별자. platform 안에서만 유일';
-COMMENT ON COLUMN {staging}.name IS '지점 이름, 사이트 원문';
+COMMENT ON COLUMN {staging}.name IS '지점 이름. 사이트 원문에서 앞머리 브랜드 표기만 통일 (예: 포토이즘 박스 -> 포토이즘)';
 COMMENT ON COLUMN {staging}.address IS '주소, 사이트 원문 (해석하지 않음)';
 COMMENT ON COLUMN {staging}.coordinate_source IS '좌표 출처. official / kakao / NULL (좌표 없음)';
 COMMENT ON COLUMN {staging}.collected_at IS '수집 시각 (KST 벽시계, 시간대 없음)';

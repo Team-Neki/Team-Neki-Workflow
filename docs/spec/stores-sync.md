@@ -36,7 +36,8 @@
   카카오 장소 ID가 아니며 원천 키 매칭에 쓰지 않습니다.
 - 원문은 `source_name/address/location/b_code`에 담고, 조회용
   `branch_name/address/location/b_code`에는 override가 있으면 그 값을 씁니다.
-  지점 이름은 원문을 보존하며 브랜드 접두 제거는 서버 `SearchNormalizer`가 맡습니다.
+  지점 이름은 enrich 의 `name` 그대로입니다. enrich 가 앞머리 브랜드 표기만 통일하며
+  (`docs/spec/enrich-pipeline.md`) 브랜드 접두 제거는 서버 `SearchNormalizer`가 맡습니다.
 - 어드민은 `override_branch_name/address/location/b_code`와 조회용 컬럼을 같은
   트랜잭션에서 갱신해야 즉시 조회에 반영됩니다. NULL로 override를 해제할 때도
   원문으로 조회용 값을 복원해야 합니다. 어드민 API 자체는 이 flow의 범위 밖입니다.
