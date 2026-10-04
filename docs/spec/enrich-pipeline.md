@@ -14,7 +14,8 @@
 다루는 것은 enrich 입니다. 검색 API 가 부스에서 쓰는 값은 법정동 코드 10자리와
 1km 안 역 둘뿐이고, 역은 좌표만으로 index(Team-Neki-Server `apps/batch` 의
 `searchIndexJob`, BACKEND-65)가 계산하므로 enrich 가 만드는 값은 법정동 코드
-하나입니다. 다루지 않는 것은 주소 문자열 해석과 표시용 주소 정리입니다.
+하나입니다. 다루지 않는 것은 주소 문자열 해석과 표시용 주소 정리입니다. 이름은
+앞머리 브랜드 표기 통일 하나만 합니다.
 
 ## collect 와 별도 flow 이고 순서는 시각으로 맞춘다
 
@@ -32,7 +33,7 @@
 
 구현 : `deployments/stores_enrich.py:25` `schedule=Cron(`,
 `flows/stores_enrich/flow.py:45` `def _read_inputs`,
-`flows/stores_enrich/region.py:82` `def from_collect`
+`flows/stores_enrich/region.py:83` `def from_collect`
 
 ## 판정
 
@@ -57,10 +58,10 @@
 - task 는 하나. 지점마다 task 를 만들지 않음. 쓰레드 안에서 로그를 남기지 않음
 
 구현 : `flows/common/kakao.py:111` `def coord2regioncode`,
-`flows/stores_enrich/region.py:115` `def reusable`,
-`flows/stores_enrich/region.py:148` `def resolve`,
-`flows/stores_enrich/region.py:267` `def enrich_stores`,
-`flows/stores_enrich/region.py:40` `WORKERS`
+`flows/stores_enrich/region.py:117` `def reusable`,
+`flows/stores_enrich/region.py:150` `def resolve`,
+`flows/stores_enrich/region.py:269` `def enrich_stores`,
+`flows/stores_enrich/region.py:41` `WORKERS`
 
 ## 주소는 해석하지 않는다
 
@@ -80,8 +81,23 @@
 코드는 맞으므로 경고만 보고 넘어가면 됩니다. `reused` 행은 처음 판정될 때 이미
 경고했으므로 매일 되풀이하지 않습니다.
 
-구현 : `flows/stores_enrich/region.py:237` `def mismatched`,
+구현 : `flows/stores_enrich/region.py:239` `def mismatched`,
 `flows/stores_enrich/table.py:32` `LEGAL_DONG_TABLE`
+
+## 이름은 앞머리 브랜드 표기만 통일한다
+
+사이트가 한 브랜드를 여러 표기로 줍니다. 포토이즘은 `포토이즘 박스 OO점` 과
+`포토이즘박스 OO점` 이 섞여 오고, 같은 브랜드가 검색과 표시에서 갈립니다. enrich 는
+`from_collect` 에서 이름 앞머리의 표기만 하나로 바꿉니다.
+
+- 포토이즘: `포토이즘 박스` / `포토이즘박스` -> `포토이즘`. `포토이즘 박스 상록수역점`
+  은 `포토이즘 상록수역점`
+- 브랜드(`platform`)별로 등록한 표기만 바꿈. 등록되지 않은 브랜드와 맞지 않는 이름은 그대로
+- 원문은 collect CSV(S3)에 남음. collect 는 여전히 해석하지 않음
+- 브랜드와 지점명을 나누는 검색용 정규화는 여전히 서버 `SearchNormalizer` 몫
+
+구현 : `flows/stores_enrich/name.py:16` `PREFIX_ALIASES`,
+`flows/stores_enrich/region.py:100` `unify_brand(`
 
 ## enrich 결과는 Postgres 에만 저장한다
 
@@ -90,7 +106,7 @@ collect 원본 CSV 는 계속 S3 에서 읽지만 enrich 결과는 S3 에 쓰지
 없습니다. 기존 S3 enrich 객체는 삭제하지 않습니다. COPY 열 순서는
 `EnrichedStore` 필드 순서가 정본입니다.
 
-구현 : `flows/stores_enrich/region.py:76` `COLUMNS = tuple(`
+구현 : `flows/stores_enrich/region.py:77` `COLUMNS = tuple(`
 
 ## 산출물 : Postgres `tb_photo_booth_enriched`
 

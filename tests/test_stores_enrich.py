@@ -3,7 +3,10 @@
 import threading
 from datetime import date, datetime
 
+import pytest
+
 from flows.stores_enrich import region
+from flows.stores_enrich.name import unify_brand
 from flows.stores_enrich.region import (
     EnrichedStore,
     from_collect,
@@ -55,6 +58,36 @@ def test_from_collect_strips_timezone_to_kst():
     assert row.collected_at.tzinfo is None
     assert row.geocode_status == "failed"
     assert row.b_code is None
+
+
+@pytest.mark.parametrize(
+    "raw,unified",
+    [
+        ("포토이즘 박스 상록수역점", "포토이즘 상록수역점"),
+        ("포토이즘박스 경기 양평점", "포토이즘 경기 양평점"),
+        ("포토이즘  박스  강남점", "포토이즘 강남점"),
+        ("포토이즘 강남점", "포토이즘 강남점"),
+        ("포토이즘박스", "포토이즘"),
+    ],
+)
+def test_unify_brand_photoism_prefix(raw, unified):
+    assert unify_brand("PHOTOISM", raw) == unified
+
+
+def test_unify_brand_leaves_other_brands_and_inner_text():
+    assert unify_brand("LIFE_FOUR_CUT", "포토이즘 박스 강남점") == "포토이즘 박스 강남점"
+    assert unify_brand("PHOTOISM", "강남 포토이즘 박스점") == "강남 포토이즘 박스점"
+
+
+def test_from_collect_unifies_brand_in_name():
+    record = {
+        "platform": "PHOTOISM",
+        "idx": "1",
+        "name": "포토이즘박스 경기 양평점",
+        "collected_at": "2026-09-24T19:23:36+00:00",
+    }
+    row = from_collect(record, source_dt=date(2026, 9, 25), enriched_at=NOW)
+    assert row.name == "포토이즘 경기 양평점"
 
 
 def test_reusable_only_when_same_coordinates_and_previous_has_code():

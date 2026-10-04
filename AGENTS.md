@@ -44,6 +44,7 @@ flows/
     flow.py               @flow
     orders.py             @task
   stores_enrich/          법정동 보강. collect 의 최신 CSV 를 읽어 Kakao 로 b_code 를 붙임
+    name.py               지점 이름 앞머리의 브랜드 표기 통일
     region.py             판정 (재사용, 폴백, 상태)
     table.py              tb_photo_booth_enriched 바꿔치기
   search_index/           서버 색인 잡을 k8s Job 으로 띄우고 기다림
@@ -137,9 +138,10 @@ flow run이 work pool 기본 이미지(베이스 prefect 이미지)로 떠서 `f
 정책은 `docs/spec/collect-pipeline.md` 가 정본입니다. 여기서는 코드를 만질 때 바로
 부딪히는 것만 추립니다.
 
-- collect 는 사이트가 준 것만 담고 해석하지 않음. 이름과 주소는 enrich 도 해석하지
-  않으며, 브랜드·지점명 분리 같은 검색용 정규화는 서버 batch(index)가 함. 예외는
-  좌표 보정 하나이고 `coordinate_source` 로 구분함
+- collect 는 사이트가 준 것만 담고 해석하지 않음. 예외는 좌표 보정 하나이고
+  `coordinate_source` 로 구분함. 주소는 enrich 도 해석하지 않고, 이름은 enrich 가
+  앞머리 브랜드 표기만 통일함(`포토이즘 박스` -> `포토이즘`). 브랜드·지점명 분리 같은
+  검색용 정규화는 서버 batch(index)가 함
 - 브랜드별 `Store` 를 두지 않음. `flows/common/store.py` 의 `CollectedStore` 하나.
   필드를 더하면 `storage.COLUMNS` 에도 넣어야 함. 빠뜨리면 `DictWriter` 가 막음
 - 브랜드를 더하면 `flows/stores_collect/flow.py` 의 `BRANDS` 에도 등록. 빠뜨리면
@@ -175,7 +177,8 @@ flow run이 work pool 기본 이미지(베이스 prefect 이미지)로 떠서 `f
 - enrich 결과는 Postgres 에만 저장. S3 는 collect 원본을 읽는 용도로만 사용
 - `EnrichedStore` 의 필드 순서가 COPY 열이자 DDL 순서. 필드를 더하면
   `table._ddl` 도 같은 자리에 넣어야 함. 한쪽만 고치면 값이 엉뚱한 컬럼에 들어감
-- 주소도 이름도 해석하지 않음. 계층은 `b_code` 자리수에, 이름은 `tb_legal_dong` 에
+- 이름은 앞머리 브랜드 표기 통일(`name.py` 의 `PREFIX_ALIASES`) 하나만 함. 같은 브랜드의
+  다른 표기가 보이면 거기에 더함. 주소는 해석하지 않음. 계층은 `b_code` 자리수에, 이름은 `tb_legal_dong` 에
   있음. 브랜드·지점명 분리 같은 검색용 정규화는 서버 batch(`SearchNormalizer`)가 함.
   시군구 비교는 경고용 느슨한 토큰 비교 하나뿐. 인천 개편 뒤 사이트 주소가 옛 구
   이름이라 인천 20여 건이 늘 경고로 뜨는데 코드는 맞음

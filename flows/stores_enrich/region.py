@@ -31,6 +31,7 @@ from flows.common import geocode, kakao
 from flows.common.manifest import KST
 from flows.common.platform import Platform
 from flows.common.store import CollectedStore
+from flows.stores_enrich.name import unify_brand
 
 GeocodeStatus = Literal["ok", "reused", "no_coordinate", "failed"]
 LookupStatus = Literal["not_called", "responded", "failed"]
@@ -85,7 +86,8 @@ def from_collect(
     """collect CSV 한 줄을 판정 전 행으로 옮긴다.
 
     collected_at 은 CSV 에 시간대가 붙은 ISO 문자열로 있다. 앱 DB 규약대로 KST
-    벽시계로 바꾸고 시간대를 뗀다. 판정 전이라 status 는 failed 로 둔다.
+    벽시계로 바꾸고 시간대를 뗀다. 판정 전이라 status 는 failed 로 둔다. 이름은
+    앞머리 브랜드 표기만 통일한다 (name.py).
     """
     collected_at = (
         datetime.fromisoformat(record["collected_at"])
@@ -95,7 +97,7 @@ def from_collect(
     return EnrichedStore(
         platform=record["platform"],
         idx=record["idx"],
-        name=record["name"] or "",
+        name=unify_brand(record["platform"], record["name"] or ""),
         address=record.get("address"),
         phone=record.get("phone"),
         longitude=record.get("longitude"),
