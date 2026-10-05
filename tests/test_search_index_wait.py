@@ -9,13 +9,21 @@ import pytest
 import prefect_kubernetes.jobs as kubernetes_jobs
 from prefect_kubernetes.jobs import KubernetesJob, KubernetesJobRun
 
+from flows.common import batch_job
 from flows.search_index import job
 
 
 def test_no_pods_wait_times_out_and_is_cancelled(monkeypatch):
     """라이브러리의 active 없는 분기를 실제로 돌려 취소까지 확인한다."""
     definition = KubernetesJob(
-        v1_job=job.manifest("image", date(2026, 9, 27), run_at="2026-09-27_053000"),
+        v1_job=batch_job.manifest(
+            "search-index",
+            job.JOB_NAME,
+            "image",
+            date(2026, 9, 27),
+            run_at="2026-09-27_053000",
+            timeout_seconds=job.TIMEOUT_SECONDS,
+        ),
         timeout_seconds=1800,
         delete_after_completion=False,
     )
@@ -38,13 +46,12 @@ def test_no_pods_wait_times_out_and_is_cancelled(monkeypatch):
     pods = SimpleNamespace(fn=AsyncMock(return_value=SimpleNamespace(items=[])))
     monkeypatch.setattr(kubernetes_jobs, "read_namespaced_job", read)
     monkeypatch.setattr(kubernetes_jobs, "list_namespaced_pod", pods)
-    monkeypatch.setattr(job, "TIMEOUT_SECONDS", 0.03)
 
     async def verify():
         started = asyncio.get_running_loop().time()
         with pytest.raises(TimeoutError):
             # 바깥쪽 상한으로 테스트 자체의 무한 대기도 막는다.
-            await asyncio.wait_for(job._wait_for_completion(run), timeout=1)
+            await asyncio.wait_for(batch_job.wait_for_completion(run, 0.03), timeout=1)
         assert asyncio.get_running_loop().time() - started < 0.5
         assert reads
         assert not run._completed
@@ -58,7 +65,7 @@ def test_no_pods_wait_times_out_and_is_cancelled(monkeypatch):
 def test_successful_wait_streams_logs():
     """완료한 Job은 로그 출력 콜백을 받은 뒤 정상 종료한다."""
     run = SimpleNamespace(await_for_completion=AsyncMock())
-    asyncio.run(job._wait_for_completion(run))
+    asyncio.run(batch_job.wait_for_completion(run, job.TIMEOUT_SECONDS))
     run.await_for_completion.assert_awaited_once_with(print_func=print)
 
 
@@ -68,7 +75,7 @@ def test_failed_job_error_is_preserved():
         await_for_completion=AsyncMock(side_effect=RuntimeError("failed"))
     )
     with pytest.raises(RuntimeError, match="failed"):
-        asyncio.run(job._wait_for_completion(run))
+        asyncio.run(batch_job.wait_for_completion(run, job.TIMEOUT_SECONDS))
 
 
 def test_task_timeout_fails_without_deleting_job(monkeypatch):
@@ -82,10 +89,10 @@ def test_task_timeout_fails_without_deleting_job(monkeypatch):
         v1_job={"metadata": {"name": "test-job"}}, trigger=Mock(return_value=run)
     )
     factory = Mock(return_value=definition)
-    monkeypatch.setenv(job.IMAGE_ENV, "test-image")
-    monkeypatch.setattr(job, "KubernetesJob", factory)
-    monkeypatch.setattr(job, "KubernetesCredentials", Mock())
-    monkeypatch.setattr(job, "get_run_logger", Mock)
+    monkeypatch.setenv(batch_job.IMAGE_ENV, "test-image")
+    monkeypatch.setattr(batch_job, "KubernetesJob", factory)
+    monkeypatch.setattr(batch_job, "KubernetesCredentials", Mock())
+    monkeypatch.setattr(batch_job, "get_run_logger", Mock)
     monkeypatch.setattr(job, "TIMEOUT_SECONDS", 0)
     with pytest.raises(TimeoutError):
         job.run_search_index.fn(date(2026, 9, 27), run_at="2026-09-27_053000")
