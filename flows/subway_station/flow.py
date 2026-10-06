@@ -14,6 +14,7 @@ S3 에 적재하지 않는다. `raw/` 와 `collect/` 는 `platform=` 파티션�
 
 from prefect import flow, get_run_logger
 
+from flows.common.discord import notify, notify_failure
 from flows.subway_station.normalize import Station, normalize
 from flows.subway_station.source import fetch_rows, parse_rows
 from flows.subway_station.table import swap_table
@@ -23,7 +24,31 @@ from flows.subway_station.table import swap_table
 MIN_EXPECTED = 1000
 
 
-@flow(name="subway-station", log_prints=True)
+def _report(stations: list[Station], swapped: dict[str, int], dataset: str) -> list[str]:
+    """Discord 알림 본문. (역, 노선) 행 수와 역 이름, 노선 수, 직전 세대 대비 증감."""
+    names = {station.name for station in stations}
+    lines = {station.line_name for station in stations}
+    report = [
+        f"원본: {dataset or '(이름 없음)'}",
+        f"적재: **{swapped['loaded']:,}건** (역 × 노선)",
+        f"- 역 이름 {len(names):,}",
+        f"- 노선 {len(lines):,}",
+    ]
+    if swapped["swapped"]:
+        report.append(
+            f"직전 세대 {swapped['before']:,}건 ({swapped['loaded'] - swapped['before']:+,})"
+        )
+    else:
+        report.append("첫 적재 (직전 세대 없음)")
+    return report
+
+
+@flow(
+    name="subway-station",
+    log_prints=True,
+    on_failure=[notify_failure],
+    on_crashed=[notify_failure],
+)
 def subway_station(persist: bool = True) -> list[Station]:
     """역 전량을 받아 정규화하고 테이블에 반영한다.
 
@@ -41,7 +66,8 @@ def subway_station(persist: bool = True) -> list[Station]:
         )
 
     if persist:
-        swap_table(stations, dataset=dataset)
+        swapped = swap_table(stations, dataset=dataset)
+        notify("지하철 역 적재 완료", lambda: _report(stations, swapped, dataset))
 
     logger.info("지하철 역 %d건", len(stations))
     return stations

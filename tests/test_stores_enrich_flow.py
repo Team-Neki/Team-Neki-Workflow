@@ -2,6 +2,7 @@
 
 import importlib
 import io
+from collections import Counter
 from datetime import date, datetime
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -22,12 +23,13 @@ def pipeline(monkeypatch):
         rows=rows,
         previous=previous,
         logger=Mock(),
-        read=Mock(return_value=rows),
+        read=Mock(return_value=(rows, {})),
         manual=Mock(return_value=([], 0)),
         current=Mock(return_value=previous),
         enrich=Mock(return_value=rows),
         swap=Mock(return_value={"unknown_codes": 0, "count": 1}),
         s3=Mock(side_effect=AssertionError("입력을 읽은 뒤 S3에 접근하면 안 됩니다")),
+        notify=Mock(),
     )
     monkeypatch.setattr(flow_module, "MIN_EXPECTED", 1)
     monkeypatch.setattr(flow_module, "get_run_logger", lambda: state.logger)
@@ -37,6 +39,8 @@ def pipeline(monkeypatch):
     monkeypatch.setattr(flow_module, "enrich_stores", state.enrich)
     monkeypatch.setattr(flow_module, "swap_table", state.swap)
     monkeypatch.setattr(storage, "_client", state.s3)
+    monkeypatch.setattr(flow_module, "notify", state.notify)
+    monkeypatch.setattr(flow_module, "_report", Mock(return_value=["report"]))
     return state
 
 
@@ -56,8 +60,12 @@ def test_enrich_result_is_only_persisted_to_postgres(pipeline, persist):
         pipeline.current.assert_called_once_with()
         pipeline.swap.assert_called_once_with(pipeline.rows, cycle=CYCLE)
         assert result["table"] == pipeline.swap.return_value
+        title, build = pipeline.notify.call_args.args
+        assert title == "지점 법정동 보강 완료"
+        assert build() == ["report"]
     else:
         pipeline.current.assert_not_called()
+        pipeline.notify.assert_not_called()
         pipeline.swap.assert_not_called()
         assert "table" not in result
 
@@ -139,9 +147,10 @@ def test_collect_input_still_comes_from_s3(monkeypatch):
             "PHOTOISM": {"status": "fresh", "source_target_date": CYCLE}
         },
     )
-    rows = flow_module._read_inputs(
+    rows, brands = flow_module._read_inputs(
         CYCLE, max_stale_days=7, enriched_at=datetime(2026, 9, 25, 5)
     )
+    assert brands == {"PHOTOISM": {"status": "fresh", "source_dt": CYCLE, "s3": 1}}
     assert len(rows) == 1
     assert rows[0].idx == "1"
     assert rows[0].source_dt == CYCLE
@@ -150,3 +159,37 @@ def test_collect_input_still_comes_from_s3(monkeypatch):
         Bucket="test-bucket", Key="collect/platform=PHOTOISM/dt=2026-09-25/input.csv"
     )
     client.put_object.assert_not_called()
+
+
+def _enriched(platform, idx, *, source_type="COLLECTED", b_code="1168010100"):
+    return SimpleNamespace(
+        platform=platform, idx=idx, source_type=source_type, b_code=b_code
+    )
+
+
+def test_report_lines_up_s3_and_enriched_per_brand():
+    brands = {
+        "PHOTOISM": {"status": "fresh", "source_dt": CYCLE, "s3": 3},
+        "PICDOT": {"status": "stale", "source_dt": date(2026, 9, 24), "s3": 1},
+        "HARU_FILM": {"status": "failed", "source_dt": None, "s3": 0},
+    }
+    enriched = [
+        _enriched("PHOTOISM", "1"),
+        _enriched("PHOTOISM", "2", b_code=None),
+        _enriched("PHOTOISM", "manual-7", source_type="MANUAL"),
+        _enriched("PICDOT", "1"),
+    ]
+    swapped = {"loaded": 4, "before": 3, "swapped": 1, "unknown_codes": 0}
+    lines = flow_module._report(
+        CYCLE, brands, enriched, Counter(ok=3, failed=1), swapped, 0
+    )
+    text = "\n".join(lines)
+    assert "적재: **4건** (수집 3 + 관리자 1)" in text
+    assert "직전 세대 3건 (+1)" in text
+    # platform, s3, enriched(수집), manual, no_bcode
+    assert any(line.split() == ["PHOTOISM", "3", "2", "1", "1"] for line in lines)
+    assert any(line.split() == ["PICDOT", "1", "1", "0", "0"] for line in lines)
+    assert any(line.split() == ["HARU_FILM", "0", "0", "0", "0"] for line in lines)
+    assert any(line.split() == ["total", "4", "3", "1", "1"] for line in lines)
+    assert "HARU_FILM: 쓸 적재물이 없어 뺐습니다" in text
+    assert "PICDOT: 2026-09-24 사이클로 대신했습니다" in text

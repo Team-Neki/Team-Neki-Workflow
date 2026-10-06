@@ -54,6 +54,7 @@ flows/
     storage.py            S3 적재
     geocode.py            좌표가 빈 지점을 Kakao로 보정
     imweb_map.py          imweb 지도 위젯 수집 (인생네컷, 포토이즘, 돈룩업)
+    discord.py            flow 결과 알림 (DISCORD_WEBHOOK_URL, SPRING_PROFILES_ACTIVE)
 aws/config                로컬 개발용 AWS 프로파일
 compose.yaml              로컬 S3 (LocalStack)
 Dockerfile                운영 이미지. worker 와 flow run 이 같이 씀

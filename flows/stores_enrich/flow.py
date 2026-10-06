@@ -26,6 +26,7 @@ from typing import Any
 
 from prefect import flow, get_run_logger
 
+from flows.common.discord import notify, notify_failure
 from flows.common.manifest import KST, MAX_STALE_DAYS, ensure_table, read_cycle
 from flows.common.manifest import target_date as cycle_date
 from flows.common.platform import Platform
@@ -47,13 +48,19 @@ from flows.stores_enrich.table import read_current, read_manual, swap_table
 MIN_EXPECTED = 800
 
 
+# 브랜드별 입력 요약. 알림에 쓴다.
+# {브랜드: {"status": fresh|stale|failed, "source_dt": date|None, "s3": 읽은 행 수}}
+Brands = dict[str, dict[str, Any]]
+
+
 def _read_inputs(
     cycle: date, *, max_stale_days: int, enriched_at: datetime
-) -> list[EnrichedStore]:
+) -> tuple[list[EnrichedStore], Brands]:
     """사이클의 브랜드별 CSV 를 읽어 판정 전 행으로 모은다.
 
     failed 브랜드는 경고 후 건너뛴다. (platform, idx) 중복은 첫 것만 남긴다.
-    결과 테이블의 PK 라 둘 수 없다.
+    결과 테이블의 PK 라 둘 수 없다. 브랜드별로 S3 에서 읽은 행 수(중복 포함)를
+    함께 돌려준다.
     """
     logger = get_run_logger()
 
@@ -62,8 +69,10 @@ def _read_inputs(
     ensure_table()
 
     stores: list[EnrichedStore] = []
+    brands: Brands = {}
     seen: set[tuple[str, str]] = set()
     for name, outcome in read_cycle(cycle, max_stale_days=max_stale_days).items():
+        brands[name] = {"status": outcome["status"], "source_dt": None, "s3": 0}
         if outcome["status"] == "failed":
             logger.warning("%s: %d일 안에 쓸 적재물이 없어 뺍니다.", name, max_stale_days)
             continue
@@ -74,7 +83,9 @@ def _read_inputs(
                 "%s: %s 사이클(%d일 전)로 대신합니다.", name, source_dt, outcome["age_days"]
             )
 
+        brands[name]["source_dt"] = source_dt
         for record in read_stores(platform=Platform(name), target_date=source_dt):
+            brands[name]["s3"] += 1
             key = (record["platform"], record["idx"])
             if key in seen:
                 logger.warning("%s idx=%s 가 중복이라 첫 것만 남깁니다.", *key)
@@ -82,7 +93,7 @@ def _read_inputs(
             seen.add(key)
             stores.append(from_collect(record, source_dt=source_dt, enriched_at=enriched_at))
 
-    return stores
+    return stores, brands
 
 
 def _read_manual(
@@ -112,7 +123,72 @@ def _read_manual(
     return stores
 
 
-@flow(name="stores-enrich", log_prints=True)
+def _report(
+    cycle: date,
+    brands: Brands,
+    enriched: list[EnrichedStore],
+    counts: Counter,
+    swapped: dict[str, int],
+    mismatched_count: int,
+) -> list[str]:
+    """Discord 알림 본문. 브랜드마다 S3 에서 읽은 건수와 enriched 에 담긴 건수를 나란히 둔다.
+
+    s3 와 enriched 가 다르면 (platform, idx) 중복으로 버린 것이다. manual 은 관리자
+    등록 지점이고 no_bcode 는 법정동 코드를 못 붙인 지점(no_coordinate, failed)이다.
+    """
+    collected = Counter(s.platform for s in enriched if s.source_type == "COLLECTED")
+    manual = Counter(s.platform for s in enriched if s.source_type == "MANUAL")
+    no_bcode = Counter(s.platform for s in enriched if s.b_code is None)
+
+    table = [f"{'platform':<16}{'s3':>6}{'enriched':>10}{'manual':>8}{'no_bcode':>10}"]
+    for name in sorted(set(brands) | set(collected) | set(manual)):
+        brand = brands.get(name, {})
+        table.append(
+            f"{name:<16}{brand.get('s3', 0):>6}{collected[name]:>10}"
+            f"{manual[name]:>8}{no_bcode[name]:>10}"
+        )
+    table.append(
+        f"{'total':<16}{sum(b['s3'] for b in brands.values()):>6}"
+        f"{sum(collected.values()):>10}{sum(manual.values()):>8}{sum(no_bcode.values()):>10}"
+    )
+
+    lines = [
+        f"사이클: {cycle:%Y-%m-%d}",
+        f"적재: **{swapped['loaded']:,}건** (수집 {sum(collected.values()):,} + "
+        f"관리자 {sum(manual.values()):,})",
+    ]
+    if swapped["swapped"]:
+        lines.append(
+            f"직전 세대 {swapped['before']:,}건 ({swapped['loaded'] - swapped['before']:+,})"
+        )
+    else:
+        lines.append("첫 적재 (직전 세대 없음)")
+    lines.append(
+        f"판정: ok {counts['ok']}, reused {counts['reused']}, "
+        f"no_coordinate {counts['no_coordinate']}, failed {counts['failed']}"
+    )
+    lines += ["```", *table, "```"]
+
+    for name, brand in sorted(brands.items()):
+        if brand["status"] == "failed":
+            lines.append(f"⚠️ {name}: 쓸 적재물이 없어 뺐습니다")
+        elif brand["status"] == "stale":
+            lines.append(f"⚠️ {name}: {brand['source_dt']:%Y-%m-%d} 사이클로 대신했습니다")
+    if mismatched_count:
+        lines.append(f"시군구 불일치 경고 {mismatched_count}건")
+    if swapped["unknown_codes"] > 0:
+        lines.append(f"⚠️ tb_legal_dong 에 없는 법정동 코드 {swapped['unknown_codes']}건")
+    elif swapped["unknown_codes"] < 0:
+        lines.append("⚠️ tb_legal_dong 이 없어 법정동 코드를 대조하지 못했습니다")
+    return lines
+
+
+@flow(
+    name="stores-enrich",
+    log_prints=True,
+    on_failure=[notify_failure],
+    on_crashed=[notify_failure],
+)
 def stores_enrich(
     target_date: date | None = None,
     persist: bool = True,
@@ -129,7 +205,9 @@ def stores_enrich(
     cycle = target_date or cycle_date()
     enriched_at = datetime.now(KST).replace(tzinfo=None)
 
-    collected = _read_inputs(cycle, max_stale_days=max_stale_days, enriched_at=enriched_at)
+    collected, brands = _read_inputs(
+        cycle, max_stale_days=max_stale_days, enriched_at=enriched_at
+    )
     if not collected:
         raise RuntimeError(
             f"{cycle:%Y-%m-%d} 사이클에 보강할 지점이 없습니다. collect 가 돌았는지 확인하세요."
@@ -196,4 +274,8 @@ def stores_enrich(
     elif swapped["unknown_codes"] < 0:
         logger.warning("tb_legal_dong 이 없어 법정동 코드를 대조하지 못했습니다.")
     result["table"] = swapped
+    notify(
+        "지점 법정동 보강 완료",
+        lambda: _report(cycle, brands, enriched, counts, swapped, len(suspicious)),
+    )
     return result
