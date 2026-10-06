@@ -10,6 +10,9 @@ manifest.read_cycle 이 정한다. 브랜드마다 대상 일자 이하의 최�
 7일 넘게 낡은 브랜드는 버린다. 늦게 끝난 collect 는 그날 enrich 에 안 들어가고
 전날 것으로 대신하며 source_dt 가 그것을 드러낸다.
 
+관리자 등록 지점(서버 tb_photo_booth_manual)도 매 실행 전량 읽어 같은 판정을 거쳐
+함께 담는다(source_type = MANUAL). 하한(MIN_EXPECTED)은 수집 지점만 센다.
+
 산출물은 Postgres tb_photo_booth_enriched 하나다. index(서버 batch)가 읽는
 현재 세대이며 enrich 결과는 S3 에 쓰지 않는다.
 색인은 여기서 띄우지 않는다. 별도 flow search-index 가 시각으로 뒤에 돌며 그
@@ -31,14 +34,16 @@ from flows.stores_enrich.region import (
     EnrichedStore,
     enrich_stores,
     from_collect,
+    from_manual,
     mismatched,
 )
-from flows.stores_enrich.table import read_current, swap_table
+from flows.stores_enrich.table import read_current, read_manual, swap_table
 
 # 브랜드 11개가 1,653건이다(2026-09-25). 절반 넘게 사라졌다면 S3 를 잘못 읽었거나
 # 브랜드 대부분이 7일 넘게 낡아 버려진 것이므로 바꿔치우지 않는다. 브랜드 하나가
 # 빠지는 것은 막지 않는다. 그것은 read_cycle 이 일부러 떨어뜨리는 동작이고, 그때
 # 스왑을 멈추면 나머지 브랜드까지 갱신이 멈춘다. 브랜드가 늘면 올린다.
+# 수집 지점만 센다. 관리자 등록 지점이 수집 장애를 가리면 안 된다.
 MIN_EXPECTED = 800
 
 
@@ -80,6 +85,33 @@ def _read_inputs(
     return stores
 
 
+def _read_manual(
+    collected: list[EnrichedStore], cycle: date, *, enriched_at: datetime
+) -> list[EnrichedStore]:
+    """관리자 등록 지점(tb_photo_booth_manual)을 판정 전 행으로 읽는다.
+
+    브랜드에 platform 이 없어 뺀 지점은 경고로 남긴다. idx 가 manual-<id> 라
+    수집 지점과 키가 겹치지 않지만, 겹치면 수집 지점을 남긴다.
+    """
+    logger = get_run_logger()
+
+    records, no_platform = read_manual()
+    if no_platform:
+        logger.warning(
+            "브랜드에 tb_brand.platform 이 없는 관리자 등록 지점 %d건은 뺍니다.", no_platform
+        )
+
+    seen = {(store.platform, store.idx) for store in collected}
+    stores: list[EnrichedStore] = []
+    for record in records:
+        store = from_manual(record, source_dt=cycle, enriched_at=enriched_at)
+        if (store.platform, store.idx) in seen:
+            logger.warning("%s idx=%s 가 수집 지점과 겹쳐 뺍니다.", store.platform, store.idx)
+            continue
+        stores.append(store)
+    return stores
+
+
 @flow(name="stores-enrich", log_prints=True)
 def stores_enrich(
     target_date: date | None = None,
@@ -97,11 +129,14 @@ def stores_enrich(
     cycle = target_date or cycle_date()
     enriched_at = datetime.now(KST).replace(tzinfo=None)
 
-    stores = _read_inputs(cycle, max_stale_days=max_stale_days, enriched_at=enriched_at)
-    if not stores:
+    collected = _read_inputs(cycle, max_stale_days=max_stale_days, enriched_at=enriched_at)
+    if not collected:
         raise RuntimeError(
             f"{cycle:%Y-%m-%d} 사이클에 보강할 지점이 없습니다. collect 가 돌았는지 확인하세요."
         )
+    manual = _read_manual(collected, cycle, enriched_at=enriched_at)
+    logger.info("입력: 수집 지점 %d건, 관리자 등록 지점 %d건", len(collected), len(manual))
+    stores = collected + manual
 
     previous = read_current() if persist else {}
     enriched = enrich_stores(stores, previous)
@@ -135,15 +170,16 @@ def stores_enrich(
             store.sgg_name,
         )
 
-    if len(enriched) < MIN_EXPECTED:
+    if len(collected) < MIN_EXPECTED:
         raise ValueError(
-            f"보강 결과가 {len(enriched)}건으로 하한 {MIN_EXPECTED}건에 못 미칩니다. "
+            f"수집 지점이 {len(collected)}건으로 하한 {MIN_EXPECTED}건에 못 미칩니다. "
             "S3 나 manifest 를 확인해야 합니다. 테이블은 바꿔치우지 않았습니다."
         )
 
     result: dict[str, Any] = {
         "cycle": f"{cycle:%Y-%m-%d}",
         "count": len(enriched),
+        "manual": len(manual),
         "status": dict(counts),
         "mismatched": len(suspicious),
     }

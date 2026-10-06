@@ -9,6 +9,9 @@
 ## 실행과 입력
 
 - enrich와 별도 flow입니다. 현재 `tb_photo_booth_enriched`를 한 번 읽습니다.
+  `source_type = 'COLLECTED'`인 수집 지점만 읽고, enrich가 함께 담은 관리자 등록
+  지점(`MANUAL`, `docs/spec/enrich-pipeline.md`)은 동기화하지 않습니다.
+  enriched에 `source_type` 열이 생기기 전(새 enrich가 한 번 돌기 전)에는 실패합니다.
 - 외부 사이트, Kakao, S3는 부르지 않습니다. 접속은 기존 `DATABASE_URL`을 씁니다.
 - `target_date`는 허용할 수집 사이클의 상한이며 기본값은 run 예약일(KST)입니다.
   미래 `source_dt`는 제외합니다. 과거 S3 스냅샷을 복원하는 백필은 아닙니다.
@@ -20,6 +23,7 @@
   수집 중지, 지도 조회 범위 전환과 검색 색인의 지점 참조 전환이 준비된 뒤 스케줄을 정합니다.
 
 구현 : `flows/stores_sync/flow.py:13` `def stores_sync`,
+`flows/stores_sync/table.py:112` `WHERE source_type = 'COLLECTED'`,
 `flows/stores_sync/records.py:28` `def prepare`,
 `deployments/stores_sync.py:9` `to_deployment(name="stores-sync"`
 
@@ -63,7 +67,7 @@
   지점 INSERT/UPDATE, S3 업로드, 검색 색인 실행은 하지 않습니다.
 
 구현 : `flows/stores_sync/table.py:93` `def synchronize`,
-`flows/stores_sync/table.py:181` `def sync_locations`
+`flows/stores_sync/table.py:183` `def sync_locations`
 
 ## 조회와 색인 연결의 후속 계약
 

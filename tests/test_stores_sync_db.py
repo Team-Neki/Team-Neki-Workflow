@@ -61,7 +61,8 @@ def db():
                 CREATE TABLE tb_photo_booth_enriched (
                     platform VARCHAR(32), idx VARCHAR(64), name VARCHAR(255), address VARCHAR(255),
                     longitude DOUBLE PRECISION, latitude DOUBLE PRECISION,
-                    source_dt DATE, collected_at TIMESTAMP, b_code CHAR(10)
+                    source_dt DATE, collected_at TIMESTAMP, b_code CHAR(10),
+                    source_type VARCHAR(16) NOT NULL DEFAULT 'COLLECTED'
                 );
                 INSERT INTO tb_brand(platform) VALUES ('PHOTOISM');
                 INSERT INTO tb_photo_booth_location (
@@ -148,6 +149,16 @@ def test_overrides_hidden_and_manual_rows_survive_sync(db):
         "1168010100",
         True,
     )
+
+
+def test_manual_enriched_rows_are_not_synchronized(db):
+    db.execute("""INSERT INTO tb_photo_booth_enriched
+        SELECT platform, 'manual-1', '관리자 지점', address, longitude, latitude,
+            source_dt, collected_at, b_code, 'MANUAL' FROM tb_photo_booth_enriched""")
+    assert run(db)["inserted"] == 1
+    assert db.execute(
+        "SELECT count(*) FROM tb_photo_booth_location WHERE source_idx = 'manual-1'"
+    ).fetchone() == (0,)
 
 
 def test_older_input_does_not_replace_newer_source(db):

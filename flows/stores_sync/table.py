@@ -105,9 +105,11 @@ def synchronize(
                     "다른 지점 동기화가 실행 중입니다. 완료 후 다시 실행하세요."
                 )
         require_schema(cursor)
+        # 관리자 등록 지점(MANUAL)은 지점 마스터의 수집 지점이 아니므로 동기화하지 않는다
         cursor.execute(
             "SELECT platform, idx, name, address, longitude, latitude, source_dt, "
-            "collected_at, b_code FROM tb_photo_booth_enriched ORDER BY platform, idx"
+            "collected_at, b_code FROM tb_photo_booth_enriched "
+            "WHERE source_type = 'COLLECTED' ORDER BY platform, idx"
         )
         stores = [SourceStore(**row) for row in cursor.fetchall()]
         ready, skipped = prepare(stores, cycle=cycle, min_expected=min_expected)

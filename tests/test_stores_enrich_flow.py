@@ -16,13 +16,14 @@ CYCLE = date(2026, 9, 25)
 
 @pytest.fixture
 def pipeline(monkeypatch):
-    rows = [SimpleNamespace(geocode_status="reused")]
+    rows = [SimpleNamespace(platform="PHOTOISM", idx="1", geocode_status="reused")]
     previous = {("PHOTOISM", "1"): object()}
     state = SimpleNamespace(
         rows=rows,
         previous=previous,
         logger=Mock(),
         read=Mock(return_value=rows),
+        manual=Mock(return_value=([], 0)),
         current=Mock(return_value=previous),
         enrich=Mock(return_value=rows),
         swap=Mock(return_value={"unknown_codes": 0, "count": 1}),
@@ -31,6 +32,7 @@ def pipeline(monkeypatch):
     monkeypatch.setattr(flow_module, "MIN_EXPECTED", 1)
     monkeypatch.setattr(flow_module, "get_run_logger", lambda: state.logger)
     monkeypatch.setattr(flow_module, "_read_inputs", state.read)
+    monkeypatch.setattr(flow_module, "read_manual", state.manual)
     monkeypatch.setattr(flow_module, "read_current", state.current)
     monkeypatch.setattr(flow_module, "enrich_stores", state.enrich)
     monkeypatch.setattr(flow_module, "swap_table", state.swap)
@@ -82,6 +84,38 @@ def test_too_few_rows_do_not_replace_postgres(pipeline, monkeypatch):
         flow_module.stores_enrich.fn(target_date=CYCLE)
     pipeline.swap.assert_not_called()
     pipeline.s3.assert_not_called()
+
+
+MANUAL_RECORD = {
+    "id": 7,
+    "platform": "PHOTOISM",
+    "branch_name": "포토이즘 강남점",
+    "address": "서울 강남구 역삼동 1",
+    "phone": None,
+    "longitude": 127.03,
+    "latitude": 37.5,
+    "updated_at": datetime(2026, 9, 20, 13, 0),
+}
+
+
+def test_manual_stores_are_enriched_with_collected(pipeline):
+    pipeline.manual.return_value = ([MANUAL_RECORD], 2)
+    pipeline.enrich.side_effect = lambda stores, _previous: stores
+    result = flow_module.stores_enrich.fn(target_date=CYCLE)
+    stores = pipeline.enrich.call_args.args[0]
+    assert [(s.platform, s.idx) for s in stores] == [("PHOTOISM", "1"), ("PHOTOISM", "manual-7")]
+    assert stores[1].source_type == "MANUAL"
+    assert stores[1].source_dt == CYCLE
+    assert result["manual"] == 1
+    assert any("platform" in call.args[0] for call in pipeline.logger.warning.call_args_list)
+
+
+def test_manual_stores_do_not_count_toward_minimum(pipeline, monkeypatch):
+    monkeypatch.setattr(flow_module, "MIN_EXPECTED", 2)
+    pipeline.manual.return_value = ([MANUAL_RECORD], 0)
+    with pytest.raises(ValueError, match="수집 지점이 1건"):
+        flow_module.stores_enrich.fn(target_date=CYCLE)
+    pipeline.swap.assert_not_called()
 
 
 def test_collect_input_still_comes_from_s3(monkeypatch):

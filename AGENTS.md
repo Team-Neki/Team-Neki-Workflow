@@ -187,6 +187,9 @@ flow run이 work pool 기본 이미지(베이스 prefect 이미지)로 떠서 `f
   지점을 물음
 - Kakao 조회는 task 하나 안의 쓰레드. 지점마다 task 를 만들지 않음. 쓰레드 안에서
   `get_run_logger` 를 부르지 않음 (컨텍스트가 따라가지 않음)
+- 관리자 등록 지점(서버 `tb_photo_booth_manual`, Flyway V35 소유)도 매 실행 읽어 함께
+  담음(`source_type = MANUAL`, `idx = manual-<id>`). 하한은 수집 지점만 셈. stores-sync 는
+  `COLLECTED` 만 읽으므로 enriched 에 행을 더하는 경로가 생기면 `source_type` 을 꼭 채움
 - 색인은 여기서 띄우지 않음. 묶으면 enrich 재시도가 색인을 되풀이하고 색인 실패가
   enrich 를 실패로 만듦. 별도 flow `search-index` 가 시각으로 뒤에 돎
 
