@@ -2,6 +2,7 @@
 
 STORES_SYNC_TEST_DATABASE_URL을 명시해야 실행한다. 앱 DATABASE_URL은 읽지 않는다.
 서버 checkout이 형제 디렉토리에 없으면 STORES_SYNC_MIGRATION_FILE로 V34를 지정한다.
+V36은 V34와 같은 디렉토리에서 찾는다.
 """
 
 import os
@@ -71,6 +72,8 @@ def db():
                     '2026-09-01', '2026-09-01');
             """)
             connection.execute(migration.read_text())
+            # 관리자 등록 지점의 원천 키를 허용하는 제약 (V34 와 같은 디렉토리)
+            connection.execute(next(migration.parent.glob("V36__*.sql")).read_text())
             connection.execute("""
                 INSERT INTO tb_photo_booth_enriched VALUES
                     ('PHOTOISM', 'official-1', '포토이즘 강남점', '서울 강남구 역삼동 1',
@@ -151,14 +154,44 @@ def test_overrides_hidden_and_manual_rows_survive_sync(db):
     )
 
 
-def test_manual_enriched_rows_are_not_synchronized(db):
+def manual(db):
+    return db.execute("""
+        SELECT id, source_type, source_platform, source_idx, branch_name, map_id
+        FROM tb_photo_booth_location WHERE source_idx = 'manual-1'
+    """).fetchone()
+
+
+def test_manual_enriched_rows_sync_as_manual_with_source_key(db):
     db.execute("""INSERT INTO tb_photo_booth_enriched
         SELECT platform, 'manual-1', '관리자 지점', address, longitude, latitude,
             source_dt, collected_at, b_code, 'MANUAL' FROM tb_photo_booth_enriched""")
-    assert run(db)["inserted"] == 1
+    assert run(db)["inserted"] == 2
+    first = manual(db)
+    assert first[1:] == ("MANUAL", "PHOTOISM", "manual-1", "관리자 지점", "source:PHOTOISM:manual-1")
+
+    db.execute("""
+        UPDATE tb_photo_booth_location SET override_branch_name='보정 이름'
+            WHERE source_idx='manual-1';
+        UPDATE tb_photo_booth_enriched SET name='관리자 수정', collected_at='2026-09-27 05:00'
+            WHERE idx='manual-1';
+    """)
+    assert run(db)["updated"] == 2
+    second = manual(db)
+    assert second[0] == first[0]
+    assert second[4] == "보정 이름"
     assert db.execute(
-        "SELECT count(*) FROM tb_photo_booth_location WHERE source_idx = 'manual-1'"
-    ).fetchone() == (0,)
+        "SELECT source_name FROM tb_photo_booth_location WHERE source_idx='manual-1'"
+    ).fetchone() == ("관리자 수정",)
+
+
+def test_missing_manual_key_constraint_fails_before_writes(db):
+    db.execute("""
+        ALTER TABLE tb_photo_booth_location
+            RENAME CONSTRAINT ck_photo_booth_location_source_keyed TO ck_photo_booth_location_source
+    """)
+    with pytest.raises(RuntimeError, match="V36"):
+        run(db)
+    assert collected(db) is None
 
 
 def test_older_input_does_not_replace_newer_source(db):

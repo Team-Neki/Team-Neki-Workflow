@@ -144,8 +144,8 @@ index 가 읽는 현재 세대입니다. 세대 교체는 `tb_legal_dong` 과 �
 - index 와의 계약은 `platform`, `idx`, `name`, `address`, `longitude`, `latitude`,
   `source_dt`, `b_code` 여덟 열. `b_code` 가 NULL 인 행도 남김. 관리자 등록 지점도
   같은 여덟 열로 담겨 index 는 구분 없이 카드를 만듦
-- `source_type` 으로 수집 지점과 관리자 등록 지점을 구분함. stores-sync 는 `COLLECTED`
-  만 읽음 (`docs/spec/stores-sync.md`). 이 열이 없는 직전 세대는 재사용하지 않으므로
+- `source_type` 으로 수집 지점과 관리자 등록 지점을 구분함. stores-sync 는 이 값을 그대로
+  지점 마스터의 `source_type` 으로 씀 (`docs/spec/stores-sync.md`). 이 열이 없는 직전 세대는 재사용하지 않으므로
   배포 직후 첫 실행은 전 지점을 Kakao 에 물음
 - 시각 컬럼은 시간대 없는 `TIMESTAMP` 에 KST 벽시계
 - BACKEND-114 의 `tb_temp_photo_booth` 와 별도 테이블. enrich 는 S3 를 읽으므로
