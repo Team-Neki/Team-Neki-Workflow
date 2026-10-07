@@ -27,7 +27,7 @@ def test_manifest_name_is_a_valid_k8s_name_and_args_follow_the_contract():
         "JASYPT_PASSWORD",
     }
     assert container["resources"] == RESOURCES
-    assert container["resources"]["limits"]["memory"] == "1Gi"
+    assert container["resources"]["limits"]["memory"] == "512Mi"
 
 
 def test_same_second_runs_get_distinct_job_names():
