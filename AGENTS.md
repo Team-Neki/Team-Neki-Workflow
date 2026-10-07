@@ -14,6 +14,8 @@
   Postgres 산출물
 - `docs/spec/search-index.md` : 검색 색인 실행(search-index). 서버 batch 잡을
   k8s Job 으로 띄우는 계약
+- `docs/spec/notification-push.md` : 알림 발송 실행(weekly-reminder, weekend-explore,
+  holiday-explore). 서버 알림 잡 3종을 k8s Job 으로 띄우는 스케줄과 계약
 
 지켜야 할 것은 셋입니다.
 
@@ -48,8 +50,12 @@ flows/
     region.py             판정 (재사용, 폴백, 상태)
     table.py              tb_photo_booth_enriched 바꿔치기
   search_index/           서버 색인 잡을 k8s Job 으로 띄우고 기다림
-    job.py                매니페스트와 실행
+    job.py                잡 이름, 타임아웃, @task (실행은 common/batch_job)
+  weekly_reminder/        서버 알림 발송 잡을 k8s Job 으로 띄우고 기다림. 셋이 같은 모양
+  weekend_explore/
+  holiday_explore/
   common/                 여러 워크플로가 함께 쓰는 task
+    batch_job.py          서버 batch 잡의 k8s Job 매니페스트와 실행·대기 (search-index, 알림 3종)
     store.py              수집 공통 스키마 (CollectedStore)
     storage.py            S3 적재
     geocode.py            좌표가 빈 지점을 Kakao로 보정
@@ -205,6 +211,25 @@ flow run이 work pool 기본 이미지(베이스 prefect 이미지)로 떠서 `f
   것이 교체됨
 - BACKEND-65 가 `searchIndexJob` 을 넣기 전까지 스케줄 없음. 들어오면
   `deployments/search_index.py` 에 05:30 KST cron 을 붙임
+- Job 을 띄우고 기다리는 코드는 `flows/common/batch_job.py` 에 있고 알림 발송과
+  같이 쓴다. 매니페스트나 대기 규칙을 바꾸면 두 spec 의 anchor 가 같이 밀린다
+
+## 알림 발송 (weekly-reminder, weekend-explore, holiday-explore)
+
+정책은 `docs/spec/notification-push.md` 가 정본입니다.
+
+- 하는 일은 서버 batch 의 알림 잡 3종을 k8s Job 으로 띄우고 기다리는 것뿐. 누구에게
+  무엇을 보내는지는 Team-Neki-Server `docs/lld/notification-push/` 에 있음
+- 잡마다 flow 와 deployment 가 하나씩. flow 하나에 잡 이름 파라미터를 두지 않음.
+  UI 와 실패 알림에서 이름으로 구분하기 위해서
+- Firebase 서비스계정 JSON 이 필요해 `run_batch_job(..., firebase=True)` 로 Secret
+  `prefect-workflow` 의 `firebase-service-account.json` 키를 `/etc/firebase` 에
+  마운트함. 키가 없으면 파드가 안 떠 타임아웃까지 기다린 뒤 실패. GitOps 의
+  `workflow-secret.example.yaml` 에 키가 적혀 있음
+- 타임아웃은 3,600초 (`flows/weekly_reminder/job.py` 의 `TIMEOUT_SECONDS`, 셋이 공유).
+  발송은 건별 FCM 왕복이라 색인보다 오래 걸림
+- 전환 중(Notification 앱이 아직 떠 있는 동안)에는 등록 직후 UI 에서 셋 다 pause.
+  `deploy.py` 가 pause 를 보존하므로 다음 배포에 풀리지 않음
 
 ## 마스터 데이터 (법정동, 지하철 역)
 
