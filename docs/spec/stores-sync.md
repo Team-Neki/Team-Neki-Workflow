@@ -9,10 +9,13 @@
 ## 실행과 입력
 
 - enrich와 별도 flow입니다. 현재 `tb_photo_booth_enriched`를 한 번 읽습니다.
+  enrich가 함께 담은 관리자 등록 지점(`source_type = 'MANUAL'`, `idx = manual-<id>`,
+  `docs/spec/enrich-pipeline.md`)도 같은 원천 키로 동기화합니다.
+  enriched에 `source_type` 열이 생기기 전(새 enrich가 한 번 돌기 전)에는 실패합니다.
 - 외부 사이트, Kakao, S3는 부르지 않습니다. 접속은 기존 `DATABASE_URL`을 씁니다.
 - `target_date`는 허용할 수집 사이클의 상한이며 기본값은 run 예약일(KST)입니다.
   미래 `source_dt`는 제외합니다. 과거 S3 스냅샷을 복원하는 백필은 아닙니다.
-- 기본 입력 하한은 800건입니다. `min_expected`는 양수만 허용합니다.
+- 기본 입력 하한은 800건이고 수집 지점(`COLLECTED`)만 셉니다. `min_expected`는 양수만 허용합니다.
   원천 키 중복·잘못된 날짜·브랜드 매핑 누락은 전체 실행을 실패시킵니다.
 - 좌표 누락·범위 오류·빈 이름·빈 주소는 해당 행만 제외하고 사유별 건수를 남깁니다.
   적재 가능한 지점이 0건이면 쓰지 않습니다.
@@ -20,16 +23,25 @@
   수집 중지, 지도 조회 범위 전환과 검색 색인의 지점 참조 전환이 준비된 뒤 스케줄을 정합니다.
 
 구현 : `flows/stores_sync/flow.py:13` `def stores_sync`,
-`flows/stores_sync/records.py:28` `def prepare`,
+`flows/stores_sync/table.py:44` `%(source_type)s`,
+`flows/stores_sync/records.py:32` `def prepare`,
 `deployments/stores_sync.py:9` `to_deployment(name="stores-sync"`
 
 ## 안정적인 ID와 수동 관리
 
 - 스키마는 Team-Neki-Server Flyway의
-  `V34__add_photo_booth_location_source_and_overrides.sql`이 소유합니다.
+  `V34__add_photo_booth_location_source_and_overrides.sql`과
+  `V36__allow_source_key_on_manual_photo_booth_location.sql`이 소유합니다.
+  V36 제약(`ck_photo_booth_location_source_keyed`)이 없으면 쓰기 전에 실패합니다.
   flow는 테이블을 만들거나 ALTER하지 않습니다. 선행 스키마가 없으면 실패합니다.
 - 기존 행은 `LEGACY`로 남습니다. 수동 등록은 `MANUAL`, 배치 생성은 `COLLECTED`입니다.
-  배치는 `COLLECTED` 원천 키에만 INSERT/UPDATE합니다. LEGACY/MANUAL은 건드리지 않습니다.
+  배치는 원천 키가 있는 행에만 INSERT/UPDATE합니다. 입력의 `source_type`을 그대로 쓰고,
+  기존 행과 `source_type`이 다르면 갱신하지 않습니다. 원천 키가 없는 LEGACY와
+  어드민이 마스터에 직접 넣은 MANUAL은 건드리지 않습니다.
+- 관리자 등록 지점(`tb_photo_booth_manual`)은 원천 키 `(tb_brand.platform, manual-<id>)`로
+  upsert합니다. 키가 있어 검색 카드와 `(platform, idx)`로 짝지어집니다.
+  관리자 지점이 삭제(`deleted_at`)되어 enrich 입력에서 빠져도 마스터 행은 수집 지점과
+  같이 지우지 않습니다. 노출 중지는 `admin_hidden`으로 합니다.
 - 수집 지점은 `(source_platform, source_idx)` 유일성 제약으로 upsert합니다.
   갱신할 때 `id`, `created_at`, `map_id`를 바꾸지 않습니다.
 - 수집 지점의 `map_id`는 호환 컬럼을 채우기 위한 `source:<platform>:<idx>`입니다.
@@ -62,8 +74,8 @@
 - `persist=False`는 입력·브랜드·스키마를 읽고 예상 건수만 반환합니다.
   지점 INSERT/UPDATE, S3 업로드, 검색 색인 실행은 하지 않습니다.
 
-구현 : `flows/stores_sync/table.py:93` `def synchronize`,
-`flows/stores_sync/table.py:181` `def sync_locations`
+구현 : `flows/stores_sync/table.py:103` `def synchronize`,
+`flows/stores_sync/table.py:194` `def sync_locations`
 
 ## 조회와 색인 연결의 후속 계약
 
@@ -82,6 +94,6 @@
 - `make stores-sync-dry-run`: 현재 환경의 입력 및 스키마 확인, 쓰기 없음
 - `make test-stores-sync-db`: 전용 PostGIS DB의 격리 schema에서 실제 upsert 검증
   (`STORES_SYNC_TEST_DATABASE_URL` 필수, 앱 DATABASE_URL을 대신 사용하지 않음)
-- 마이그레이션 적용 전 실패, 동일 입력 두 번의 ID 유지, override 유지, MANUAL/LEGACY
-  유지, admin_hidden 유지, 오래된 입력 차단, 실패 시 롤백을 확인합니다.
+- 마이그레이션 적용 전 실패(V34, V36), 동일 입력 두 번의 ID 유지, override 유지,
+  관리자 등록 지점의 MANUAL 동기화, 원천 키 없는 MANUAL/LEGACY 유지, admin_hidden 유지, 오래된 입력 차단, 실패 시 롤백을 확인합니다.
 - 운영/staging 배포와 어드민 API·검색 색인 연결은 이 변경에서 실행하지 않습니다.

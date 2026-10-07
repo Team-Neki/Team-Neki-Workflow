@@ -32,8 +32,8 @@
 - `collected_at` 은 CSV 의 시간대 붙은 ISO 문자열을 KST 벽시계로 바꾸고 시간대를 뗌
 
 구현 : `deployments/stores_enrich.py:25` `schedule=Cron(`,
-`flows/stores_enrich/flow.py:45` `def _read_inputs`,
-`flows/stores_enrich/region.py:83` `def from_collect`
+`flows/stores_enrich/flow.py:50` `def _read_inputs`,
+`flows/stores_enrich/region.py:90` `def from_collect`
 
 ## 판정
 
@@ -58,10 +58,10 @@
 - task 는 하나. 지점마다 task 를 만들지 않음. 쓰레드 안에서 로그를 남기지 않음
 
 구현 : `flows/common/kakao.py:111` `def coord2regioncode`,
-`flows/stores_enrich/region.py:117` `def reusable`,
-`flows/stores_enrich/region.py:150` `def resolve`,
-`flows/stores_enrich/region.py:269` `def enrich_stores`,
-`flows/stores_enrich/region.py:41` `WORKERS`
+`flows/stores_enrich/region.py:156` `def reusable`,
+`flows/stores_enrich/region.py:189` `def resolve`,
+`flows/stores_enrich/region.py:308` `def enrich_stores`,
+`flows/stores_enrich/region.py:45` `WORKERS`
 
 ## 주소는 해석하지 않는다
 
@@ -81,8 +81,8 @@
 코드는 맞으므로 경고만 보고 넘어가면 됩니다. `reused` 행은 처음 판정될 때 이미
 경고했으므로 매일 되풀이하지 않습니다.
 
-구현 : `flows/stores_enrich/region.py:239` `def mismatched`,
-`flows/stores_enrich/table.py:32` `LEGAL_DONG_TABLE`
+구현 : `flows/stores_enrich/region.py:278` `def mismatched`,
+`flows/stores_enrich/table.py:40` `LEGAL_DONG_TABLE`
 
 ## 이름은 앞머리 브랜드 표기만 통일한다
 
@@ -97,7 +97,30 @@
 - 브랜드와 지점명을 나누는 검색용 정규화는 여전히 서버 `SearchNormalizer` 몫
 
 구현 : `flows/stores_enrich/name.py:16` `PREFIX_ALIASES`,
-`flows/stores_enrich/region.py:100` `unify_brand(`
+`flows/stores_enrich/region.py:107` `unify_brand(`
+
+## 관리자 등록 지점도 함께 담는다
+
+수집 경로에 없는 지점은 관리자가 서버의 `tb_photo_booth_manual` 에 넣습니다. enrich 는
+매 실행 이 테이블을 전량 읽어 수집 지점과 같은 판정(재사용 또는 Kakao)을 거쳐 함께
+담습니다. 테이블 스키마는 Team-Neki-Server Flyway(`V35__create_photo_booth_manual_table.sql`)가
+소유하고 enrich 는 읽기만 합니다. BACKEND-222 작업입니다.
+
+- `deleted_at` 이 NULL 이고 브랜드가 삭제되지 않은 행만 읽음
+- `platform` 은 브랜드의 `tb_brand.platform`. 서버 색인이 그 값으로 브랜드를 찾으므로
+  platform 이 없는 브랜드의 지점은 빼고 건수를 경고로 남김
+- `idx` 는 `manual-<id>`. 사이트 idx 와 겹치지 않게 접두를 붙임. 겹치면 수집 지점을 남김
+- `source_type` 은 수집 지점 `COLLECTED`, 관리자 등록 지점 `MANUAL`. 지점 마스터와 같은 어휘
+- `source_dt` 는 이번 사이클, `collected_at` 은 관리자가 마지막으로 고친 시각(`updated_at`),
+  `coordinate_source` 는 `manual`
+- 이름은 수집 지점과 같이 앞머리 브랜드 표기만 통일함
+- 하한(800)은 수집 지점만 셈. 관리자 등록 지점이 수집 장애를 가리지 않게 함
+- 테이블이 없으면(서버 마이그레이션 전) 경고 후 수집 지점만으로 진행함
+
+구현 : `flows/stores_enrich/table.py:145` `def read_manual`,
+`flows/stores_enrich/region.py:125` `def from_manual`,
+`flows/stores_enrich/region.py:41` `MANUAL_IDX_PREFIX`,
+`flows/stores_enrich/flow.py:88` `def _read_manual`
 
 ## enrich 결과는 Postgres 에만 저장한다
 
@@ -106,7 +129,7 @@ collect 원본 CSV 는 계속 S3 에서 읽지만 enrich 결과는 S3 에 쓰지
 없습니다. 기존 S3 enrich 객체는 삭제하지 않습니다. COPY 열 순서는
 `EnrichedStore` 필드 순서가 정본입니다.
 
-구현 : `flows/stores_enrich/region.py:77` `COLUMNS = tuple(`
+구현 : `flows/stores_enrich/region.py:84` `COLUMNS = tuple(`
 
 ## 산출물 : Postgres `tb_photo_booth_enriched`
 
@@ -116,18 +139,22 @@ index 가 읽는 현재 세대입니다. 세대 교체는 `tb_legal_dong` 과 �
 같은 날 다시 돌리면 인덱스 이름이 현재 세대와 부딪혀 `1` 이 붙었다 다음 실행에
 돌아오며, `2` 이상으로 올라가면 `_prev` 정리가 빠진 것입니다.
 
-- 하한 800 미만이면 바꿔치우지 않고 예외. 브랜드 하나가 빠지는 것은 막지 않고
-  거의 빈 테이블만 막음
+- 수집 지점이 하한 800 미만이면 바꿔치우지 않고 예외. 브랜드 하나가 빠지는 것은
+  막지 않고 거의 빈 테이블만 막음
 - index 와의 계약은 `platform`, `idx`, `name`, `address`, `longitude`, `latitude`,
-  `source_dt`, `b_code` 여덟 열. `b_code` 가 NULL 인 행도 남김
+  `source_dt`, `b_code` 여덟 열. `b_code` 가 NULL 인 행도 남김. 관리자 등록 지점도
+  같은 여덟 열로 담겨 index 는 구분 없이 카드를 만듦
+- `source_type` 으로 수집 지점과 관리자 등록 지점을 구분함. stores-sync 는 이 값을 그대로
+  지점 마스터의 `source_type` 으로 씀 (`docs/spec/stores-sync.md`). 이 열이 없는 직전 세대는 재사용하지 않으므로
+  배포 직후 첫 실행은 전 지점을 Kakao 에 물음
 - 시각 컬럼은 시간대 없는 `TIMESTAMP` 에 KST 벽시계
 - BACKEND-114 의 `tb_temp_photo_booth` 와 별도 테이블. enrich 는 S3 를 읽으므로
   그쪽을 기다리지 않음
 
-구현 : `flows/stores_enrich/table.py:28` `TABLE`,
-`flows/stores_enrich/table.py:135` `def swap_table`,
-`flows/stores_enrich/table.py:105` `def read_current`,
-`flows/stores_enrich/flow.py:42` `MIN_EXPECTED`
+구현 : `flows/stores_enrich/table.py:33` `TABLE`,
+`flows/stores_enrich/table.py:183` `def swap_table`,
+`flows/stores_enrich/table.py:116` `def read_current`,
+`flows/stores_enrich/flow.py:47` `MIN_EXPECTED`
 
 ## 색인은 별도 flow 가 띄운다
 

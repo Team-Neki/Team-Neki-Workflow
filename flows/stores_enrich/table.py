@@ -11,15 +11,20 @@ source_dt, b_code 여덟 열이다. 나머지는 운영 확인용이라 바꿔�
 않는다. b_code 가 NULL 인 행도 남긴다. index 가 region_ids 만 비우고 카드는
 만든다.
 
+관리자 등록 지점(tb_photo_booth_manual)도 같은 테이블에 source_type = MANUAL 로
+함께 담는다(read_manual). index 는 수집 지점과 구분하지 않고 같은 규칙으로 카드를 만든다.
+
 직전 세대는 스왑 전에 읽어 재사용 판정에 쓴다(read_current). 같은 트랜잭션일
 필요가 없다. 읽은 뒤 누가 스왑해도 답이 낡을 뿐 틀리지는 않는다.
 """
 
 from dataclasses import astuple
 from datetime import date, datetime
+from typing import Any
 
 from prefect import get_run_logger, task
 from psycopg import errors, sql
+from psycopg.rows import dict_row
 
 from flows.common.manifest import KST
 from flows.common.postgres import connect
@@ -27,6 +32,9 @@ from flows.stores_enrich.region import COLUMNS, EnrichedStore
 
 TABLE = "tb_photo_booth_enriched"
 PREV_TABLE = f"{TABLE}_prev"
+
+# 관리자 등록 지점. 스키마는 Team-Neki-Server Flyway(V35)가 소유하고 여기서는 읽기만 한다.
+MANUAL_TABLE = "tb_photo_booth_manual"
 
 # 법정동 마스터. 여기 없는 b_code 를 세어 개편 뒤 마스터가 낡은 것을 드러낸다.
 LEGAL_DONG_TABLE = "tb_legal_dong"
@@ -51,7 +59,8 @@ def _ddl(staging: str) -> str:
     """
     return f"""
 CREATE TABLE {staging} (
-    -- collect 가 준 것 (tb_store_collect_manifest 가 가리키는 CSV 그대로)
+    -- collect 가 준 것 (tb_store_collect_manifest 가 가리키는 CSV 그대로).
+    -- 관리자 등록 지점은 tb_photo_booth_manual 에서 같은 모양으로 옮긴다 (region.from_manual)
     platform            VARCHAR(32)      NOT NULL,
     idx                 VARCHAR(64)      NOT NULL,
     name                VARCHAR(255)     NOT NULL,
@@ -62,6 +71,7 @@ CREATE TABLE {staging} (
     coordinate_source   VARCHAR(16),
     collected_at        TIMESTAMP        NOT NULL,
     source_dt           DATE             NOT NULL,
+    source_type         VARCHAR(16)      NOT NULL,
 
     -- enrich 가 더하는 것
     b_code              CHAR(10),
@@ -90,9 +100,10 @@ COMMENT ON COLUMN {staging}.platform IS '브랜드 (flows.common.platform.Platfo
 COMMENT ON COLUMN {staging}.idx IS '사이트가 준 지점 식별자. platform 안에서만 유일';
 COMMENT ON COLUMN {staging}.name IS '지점 이름. 사이트 원문에서 앞머리 브랜드 표기만 통일 (예: 포토이즘 박스 -> 포토이즘)';
 COMMENT ON COLUMN {staging}.address IS '주소, 사이트 원문 (해석하지 않음)';
-COMMENT ON COLUMN {staging}.coordinate_source IS '좌표 출처. official / kakao / NULL (좌표 없음)';
-COMMENT ON COLUMN {staging}.collected_at IS '수집 시각 (KST 벽시계, 시간대 없음)';
-COMMENT ON COLUMN {staging}.source_dt IS '어느 수집 사이클에서 왔나. 오늘이 아니면 그 브랜드는 이전 사이클로 대신한 것';
+COMMENT ON COLUMN {staging}.coordinate_source IS '좌표 출처. official / kakao / manual (관리자 입력) / NULL (좌표 없음)';
+COMMENT ON COLUMN {staging}.collected_at IS '수집 시각 (KST 벽시계, 시간대 없음). MANUAL 은 관리자가 마지막으로 고친 시각';
+COMMENT ON COLUMN {staging}.source_dt IS '어느 수집 사이클에서 왔나. 오늘이 아니면 그 브랜드는 이전 사이클로 대신한 것. MANUAL 은 적재한 사이클';
+COMMENT ON COLUMN {staging}.source_type IS 'COLLECTED 수집 지점 / MANUAL 관리자 등록 지점 (tb_photo_booth_manual, idx 는 manual-<id>)';
 COMMENT ON COLUMN {staging}.b_code IS '법정동 코드 10자리 (Kakao coord2regioncode). 실패하면 NULL';
 COMMENT ON COLUMN {staging}.sido_name IS 'Kakao 가 준 시도 이름 (예: 서울특별시). b_code 앞 2자리. 운영 확인용, 정본은 tb_legal_dong';
 COMMENT ON COLUMN {staging}.sgg_name IS 'Kakao 가 준 시군구 이름 (예: 강남구, 수원시 영통구). b_code 앞 5자리. 세종은 NULL. 운영 확인용';
@@ -129,6 +140,43 @@ def read_current() -> dict[tuple[str, str], EnrichedStore]:
                 for values in cursor.fetchall()
             ]
     return {(row.platform, row.idx): row for row in rows}
+
+
+def read_manual() -> tuple[list[dict[str, Any]], int]:
+    """관리자 등록 지점 중 살아 있는 것을 읽는다. (적재할 행, 브랜드 platform 이 없어 뺀 수).
+
+    platform 은 브랜드의 tb_brand.platform 이다. 서버 색인이 그 값으로 브랜드를 찾으므로
+    platform 이 없는 브랜드(수집하지 않는 브랜드)의 지점은 넣어도 색인에서 빠진다. 그래서
+    여기서 빼고 건수만 돌려준다. 삭제된 브랜드의 지점도 뺀다.
+
+    테이블이 없으면(서버 마이그레이션 전) 빈 목록이다. 수집 지점만으로 enrich 는 돈다.
+    """
+    logger = get_run_logger()
+
+    with connect() as connection:
+        with connection.cursor(row_factory=dict_row) as cursor:
+            cursor.execute("SELECT to_regclass(%s)", (MANUAL_TABLE,))
+            if cursor.fetchone()["to_regclass"] is None:
+                logger.warning(
+                    "%s 이 없어 관리자 등록 지점 없이 보강합니다. 서버 마이그레이션(V35)을 확인하세요.",
+                    MANUAL_TABLE,
+                )
+                return [], 0
+            cursor.execute(
+                f"""
+                SELECT m.id, b.platform, m.branch_name, m.address, m.phone,
+                       ST_X(m.location) AS longitude, ST_Y(m.location) AS latitude,
+                       m.updated_at
+                FROM {MANUAL_TABLE} m
+                JOIN tb_brand b ON b.id = m.brand_id AND b.deleted_at IS NULL
+                WHERE m.deleted_at IS NULL
+                ORDER BY m.id
+                """
+            )
+            rows = cursor.fetchall()
+
+    records = [row for row in rows if row["platform"] is not None]
+    return records, len(rows) - len(records)
 
 
 @task

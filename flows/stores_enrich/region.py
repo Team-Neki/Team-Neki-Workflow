@@ -35,6 +35,10 @@ from flows.stores_enrich.name import unify_brand
 
 GeocodeStatus = Literal["ok", "reused", "no_coordinate", "failed"]
 LookupStatus = Literal["not_called", "responded", "failed"]
+SourceType = Literal["COLLECTED", "MANUAL"]
+
+# 관리자 등록 지점의 idx 접두. 사이트가 주는 idx 와 겹치지 않게 한다.
+MANUAL_IDX_PREFIX = "manual-"
 
 # 동시에 보내는 조회 수. QPS 가 미공개라 낮게 잡는다. 재사용이 대부분을 걸러
 # 하루 호출이 변경분 수십 건이라 이 값이 실행 시간을 좌우하지 않는다.
@@ -62,6 +66,9 @@ class EnrichedStore:
     coordinate_source: str | None
     collected_at: datetime
     source_dt: date
+    # COLLECTED 수집 지점 / MANUAL 관리자 등록 지점(tb_photo_booth_manual). 값은 지점
+    # 마스터(tb_photo_booth_location.source_type)와 같은 어휘다.
+    source_type: SourceType
 
     # enrich 가 더하는 것
     b_code: str | None
@@ -105,6 +112,38 @@ def from_collect(
         coordinate_source=record.get("coordinate_source"),
         collected_at=collected_at,
         source_dt=source_dt,
+        source_type="COLLECTED",
+        b_code=None,
+        sido_name=None,
+        sgg_name=None,
+        umd_name=None,
+        geocode_status="failed",
+        enriched_at=enriched_at,
+    )
+
+
+def from_manual(
+    record: dict[str, Any], *, source_dt: date, enriched_at: datetime
+) -> EnrichedStore:
+    """tb_photo_booth_manual 한 행(table.read_manual)을 판정 전 행으로 옮긴다.
+
+    platform 은 브랜드의 tb_brand.platform, idx 는 manual-<id> 다. 수집 사이클이
+    없으므로 source_dt 는 이번 사이클이고, collected_at 은 관리자가 마지막으로 고친
+    시각(updated_at)이다. 좌표는 관리자가 준 것이라 coordinate_source 는 manual 이다.
+    법정동은 수집 지점과 같은 길(재사용 또는 Kakao)로 정한다.
+    """
+    return EnrichedStore(
+        platform=record["platform"],
+        idx=f"{MANUAL_IDX_PREFIX}{record['id']}",
+        name=unify_brand(record["platform"], record["branch_name"]),
+        address=record["address"],
+        phone=record["phone"],
+        longitude=record["longitude"],
+        latitude=record["latitude"],
+        coordinate_source="manual",
+        collected_at=record["updated_at"],
+        source_dt=source_dt,
+        source_type="MANUAL",
         b_code=None,
         sido_name=None,
         sgg_name=None,

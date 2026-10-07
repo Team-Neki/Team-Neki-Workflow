@@ -41,7 +41,7 @@ INSERT INTO tb_photo_booth_location AS current (
 ) VALUES (
     %(map_id)s, %(brand_id)s, %(name)s, %(address)s,
     ST_SetSRID(ST_MakePoint(%(longitude)s, %(latitude)s), 4326), %(now)s, %(now)s,
-    'COLLECTED', %(platform)s, %(idx)s, %(name)s, %(address)s,
+    %(source_type)s, %(platform)s, %(idx)s, %(name)s, %(address)s,
     ST_SetSRID(ST_MakePoint(%(longitude)s, %(latitude)s), 4326),
     %(b_code)s, %(source_dt)s, %(collected_at)s, %(b_code)s
 )
@@ -62,7 +62,7 @@ ON CONFLICT (source_platform, source_idx) DO UPDATE SET
         ELSE EXCLUDED.source_b_code
     END,
     updated_at = EXCLUDED.updated_at
-WHERE current.source_type = 'COLLECTED'
+WHERE current.source_type = EXCLUDED.source_type
     AND (current.source_dt, current.source_collected_at)
         <= (EXCLUDED.source_dt, EXCLUDED.source_collected_at)
 RETURNING id
@@ -88,6 +88,16 @@ def require_schema(cursor) -> None:
     )
     if cursor.fetchone() is None:
         raise RuntimeError("서버 Flyway V34의 원천 키 유일성 제약이 없습니다.")
+    # V34 제약은 MANUAL 에 원천 키를 허용하지 않는다. V36 전이면 관리자 지점 INSERT 가 실패한다
+    cursor.execute(
+        "SELECT 1 FROM pg_constraint WHERE conrelid = to_regclass(%s) "
+        "AND conname = 'ck_photo_booth_location_source_keyed' AND contype = 'c'",
+        (TABLE,),
+    )
+    if cursor.fetchone() is None:
+        raise RuntimeError(
+            "서버 Flyway V36을 먼저 적용해야 합니다. 관리자 등록 지점의 원천 키를 허용하는 제약이 없습니다."
+        )
 
 
 def synchronize(
@@ -105,9 +115,11 @@ def synchronize(
                     "다른 지점 동기화가 실행 중입니다. 완료 후 다시 실행하세요."
                 )
         require_schema(cursor)
+        # 관리자 등록 지점(MANUAL)도 (platform, manual-<id>) 원천 키로 함께 동기화한다
         cursor.execute(
             "SELECT platform, idx, name, address, longitude, latitude, source_dt, "
-            "collected_at, b_code FROM tb_photo_booth_enriched ORDER BY platform, idx"
+            "collected_at, b_code, source_type FROM tb_photo_booth_enriched "
+            "ORDER BY platform, idx"
         )
         stores = [SourceStore(**row) for row in cursor.fetchall()]
         ready, skipped = prepare(stores, cycle=cycle, min_expected=min_expected)
@@ -127,7 +139,7 @@ def synchronize(
 
         cursor.execute(
             "SELECT source_platform, source_idx, source_dt, source_collected_at "
-            "FROM tb_photo_booth_location WHERE source_type = 'COLLECTED'"
+            "FROM tb_photo_booth_location WHERE source_platform IS NOT NULL"
         )
         versions = {
             (row["source_platform"], row["source_idx"]): (
@@ -148,6 +160,7 @@ def synchronize(
                     UPSERT,
                     {
                         "map_id": f"source:{row.platform}:{row.idx}",
+                        "source_type": row.source_type,
                         "brand_id": brands[row.platform],
                         "platform": row.platform,
                         "idx": row.idx,

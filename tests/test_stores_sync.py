@@ -89,6 +89,19 @@ def test_input_floor_and_zero_valid_rows_fail():
         prepare([store(address=None)], cycle=CYCLE, min_expected=1)
 
 
+def test_manual_rows_pass_but_do_not_count_toward_floor():
+    manual = store(idx="manual-1", source_type="MANUAL")
+    rows, _ = prepare([store(), manual], cycle=CYCLE, min_expected=1)
+    assert [row.source_type for row in rows] == ["COLLECTED", "MANUAL"]
+    with pytest.raises(ValueError, match="수집 지점"):
+        prepare([store(), manual], cycle=CYCLE, min_expected=2)
+
+
+def test_unknown_source_type_fails_before_writes():
+    with pytest.raises(ValueError, match="source_type"):
+        prepare([store(source_type="LEGACY")], cycle=CYCLE, min_expected=1)
+
+
 @pytest.mark.parametrize("minimum", [0, -1, True, 1.5])
 def test_minimum_must_be_a_positive_integer(minimum):
     with pytest.raises(ValueError, match="양의 정수"):
