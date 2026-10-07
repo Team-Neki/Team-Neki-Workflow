@@ -32,7 +32,7 @@
 - `collected_at` 은 CSV 의 시간대 붙은 ISO 문자열을 KST 벽시계로 바꾸고 시간대를 뗌
 
 구현 : `deployments/stores_enrich.py:25` `schedule=Cron(`,
-`flows/stores_enrich/flow.py:50` `def _read_inputs`,
+`flows/stores_enrich/flow.py:56` `def _read_inputs`,
 `flows/stores_enrich/region.py:90` `def from_collect`
 
 ## 판정
@@ -120,7 +120,7 @@
 구현 : `flows/stores_enrich/table.py:145` `def read_manual`,
 `flows/stores_enrich/region.py:125` `def from_manual`,
 `flows/stores_enrich/region.py:41` `MANUAL_IDX_PREFIX`,
-`flows/stores_enrich/flow.py:88` `def _read_manual`
+`flows/stores_enrich/flow.py:99` `def _read_manual`
 
 ## enrich 결과는 Postgres 에만 저장한다
 
@@ -154,7 +154,7 @@ index 가 읽는 현재 세대입니다. 세대 교체는 `tb_legal_dong` 과 �
 구현 : `flows/stores_enrich/table.py:33` `TABLE`,
 `flows/stores_enrich/table.py:183` `def swap_table`,
 `flows/stores_enrich/table.py:116` `def read_current`,
-`flows/stores_enrich/flow.py:47` `MIN_EXPECTED`
+`flows/stores_enrich/flow.py:48` `MIN_EXPECTED`
 
 ## 색인은 별도 flow 가 띄운다
 
@@ -163,6 +163,24 @@ enrich 가 끝나도 색인 Job 을 띄우지 않습니다. 묶으면 enrich 재
 뒤에 돌며 그 시점의 `tb_photo_booth_enriched` 현재 세대를 읽습니다. 정책은
 `docs/spec/search-index.md` 에 있습니다.
 
+## 결과는 Discord 로 알린다
+
+적재가 끝나면(`persist=True`) 결과를 Discord webhook 으로 보냅니다. 실패하거나
+크래시한 run 도 사유와 함께 보냅니다. `legal-dong`, `subway-station` 도 같은 모듈로
+알립니다.
+
+- 주소는 `DISCORD_WEBHOOK_URL`. 비어 있으면 보내지 않음. 로컬 실행이 채널을 울리지 않게
+- 제목 앞에 `SPRING_PROFILES_ACTIVE` 를 붙여 환경을 가름. 비어 있으면 `local`
+- 본문은 브랜드마다 S3 에서 읽은 행 수(`s3`), enriched 에 담긴 수집 지점(`enriched`),
+  관리자 등록 지점(`manual`), 법정동 코드를 못 붙인 지점(`no_bcode`). `s3` 와
+  `enriched` 가 다르면 `(platform, idx)` 중복으로 버린 것
+- `failed` 로 빠진 브랜드와 `stale` 로 대신한 브랜드, `tb_legal_dong` 에 없는 코드를 경고로 붙임
+- **알림 실패로 flow 를 실패시키지 않음.** 알림은 적재 커밋 뒤에 불리고, 발송·본문 조립의 어떤 예외도 경고로만 남김. 새면 이미 끝난 적재가 실패로 기록되고 재시도가 적재를 되풀이함
+
+구현 : `flows/common/discord.py:53` `def notify`,
+`flows/common/discord.py:96` `def notify_failure`,
+`flows/stores_enrich/flow.py:126` `def _report`
+
 ## 외부 의존과 장애
 
 | 의존 | 없거나 죽었을 때 |
@@ -170,6 +188,7 @@ enrich 가 끝나도 색인 Job 을 띄우지 않습니다. 묶으면 enrich 재
 | Postgres | flow 실패. `DATABASE_URL` 이 없으면 시작 직후 `RuntimeError` |
 | S3 (읽기) | 그 브랜드 예외로 flow 실패. 건수 불일치도 같음 |
 | Kakao | 그 지점만 `failed`. 연속 3회면 남은 지점은 묻지 않음. flow 완주 |
+| Discord | 경고만 남김. flow 완주 |
 
 ## 재실행과 백필
 

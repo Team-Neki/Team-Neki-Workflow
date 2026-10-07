@@ -23,9 +23,19 @@ S3 에 적재하지 않는다. `raw/` 와 `collect/` 는 `platform=` 파티션�
 그러면 `stores_collect` 의 브랜드 순회에 섞여 들어간다.
 """
 
+from collections import Counter
+
 from prefect import flow, get_run_logger
 
-from flows.legal_dong.normalize import LegalDong, normalize
+from flows.common.discord import notify, notify_failure
+from flows.legal_dong.normalize import (
+    LEVEL_RI,
+    LEVEL_SGG,
+    LEVEL_SIDO,
+    LEVEL_UMD,
+    LegalDong,
+    normalize,
+)
 from flows.legal_dong.source import fetch_rows, parse_rows
 from flows.legal_dong.table import swap_table
 
@@ -34,7 +44,29 @@ from flows.legal_dong.table import swap_table
 MIN_EXPECTED = 15000
 
 
-@flow(name="legal-dong", log_prints=True)
+LEVEL_NAMES = {LEVEL_SIDO: "시도", LEVEL_SGG: "시군구", LEVEL_UMD: "읍면동", LEVEL_RI: "리"}
+
+
+def _report(dongs: list[LegalDong], swapped: dict[str, int], dataset: str) -> list[str]:
+    """Discord 알림 본문. 계층별 건수와 직전 세대 대비 증감."""
+    levels = Counter(dong.level for dong in dongs)
+    lines = [f"원본: {dataset or '(이름 없음)'}", f"적재: **{swapped['loaded']:,}건**"]
+    lines += [f"- {name} {levels[level]:,}" for level, name in LEVEL_NAMES.items()]
+    if swapped["swapped"]:
+        lines.append(
+            f"직전 세대 {swapped['before']:,}건 ({swapped['loaded'] - swapped['before']:+,})"
+        )
+    else:
+        lines.append("첫 적재 (직전 세대 없음)")
+    return lines
+
+
+@flow(
+    name="legal-dong",
+    log_prints=True,
+    on_failure=[notify_failure],
+    on_crashed=[notify_failure],
+)
 def legal_dong(persist: bool = True) -> list[LegalDong]:
     """현존 법정동 전량을 받아 정규화하고 테이블에 반영한다.
 
@@ -53,7 +85,8 @@ def legal_dong(persist: bool = True) -> list[LegalDong]:
         )
 
     if persist:
-        swap_table(dongs, dataset=dataset)
+        swapped = swap_table(dongs, dataset=dataset)
+        notify("법정동 적재 완료", lambda: _report(dongs, swapped, dataset))
 
     logger.info("법정동 %d건", len(dongs))
     return dongs
