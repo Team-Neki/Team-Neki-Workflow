@@ -6,7 +6,7 @@ import re
 import pytest
 
 from deployments.search_index import build
-from flows.search_index.job import TIMEOUT_SECONDS, manifest
+from flows.search_index.job import RESOURCES, TIMEOUT_SECONDS, manifest
 
 
 def test_manifest_name_is_a_valid_k8s_name_and_args_follow_the_contract():
@@ -26,6 +26,8 @@ def test_manifest_name_is_a_valid_k8s_name_and_args_follow_the_contract():
         "SPRING_PROFILES_ACTIVE",
         "JASYPT_PASSWORD",
     }
+    assert container["resources"] == RESOURCES
+    assert container["resources"]["limits"]["memory"] == "1Gi"
 
 
 def test_same_second_runs_get_distinct_job_names():
