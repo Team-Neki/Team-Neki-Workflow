@@ -58,13 +58,20 @@ flow 실패입니다. 환경변수가 없으면 경고 후 끝납니다. 로컬�
   concurrency 슬롯이 비므로, 남은 Job 이 계속 돌면 재실행한 Job 과 겹칩니다.
   같은 상한에서 k8s 가 파드를 끝냅니다. swap 도중에 끝나도 트랜잭션이 롤백돼
   서빙 중 테이블은 그대로입니다
+- 컨테이너 리소스는 requests `256Mi`/`250m`, limits `512Mi`/`1000m`. batch 이미지의
+  JVM heap 상한은 memory limit 의 50% (서버 Dockerfile 의 `JAVA_TOOL_OPTIONS`,
+  BACKEND-219) 라서, limit 이 없으면 노드 메모리의 50% 까지 커지고 request 도 없어
+  같은 노드의 api 파드와 메모리를 다툼. 512Mi 면 heap 은 256MB. 지점 1,653건 실측에서
+  GC 후 heap 은 56MB 였고 cgroup 최대 사용량은 366MB. 웹 서버가 없는 one-shot 이라
+  api 파드(1Gi)만큼 두지 않음. CPU limit 은 기동이 CPU 를 많이 써서 한 코어
 - flow run 파드는 SA `prefect-worker`. base job template 기본값이라 deployment 는
   지정하지 않음. Role 이 jobs 생성과 pods/log 조회를 허용함
 
 구현 : `flows/search_index/job.py:37` `IMAGE_ENV`,
-`flows/search_index/job.py:56` `def manifest`,
-`flows/search_index/job.py:120` `async def _wait_for_completion`,
-`flows/search_index/job.py:127` `def run_search_index`
+`flows/search_index/job.py:60` `RESOURCES`,
+`flows/search_index/job.py:66` `def manifest`,
+`flows/search_index/job.py:131` `async def _wait_for_completion`,
+`flows/search_index/job.py:138` `def run_search_index`
 
 ## 외부 의존과 장애
 
