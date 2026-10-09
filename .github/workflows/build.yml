@@ -1,4 +1,4 @@
-# main 에 merge 되면 이미지를 GHCR 에 올리고 GitOps 레포의 태그를 갱신한다.
+# main 에 merge 되면 prod, 수동 실행은 선택한 환경의 이미지를 배포한다.
 #
 # Prefect 서버는 외부에 노출되지 않으므로 여기서 서버를 건드리지 않는다.
 # deployment 등록(deploy.py)은 워커 파드의 initContainer 가 클러스터 안에서 한다.
@@ -6,10 +6,8 @@
 #   merge -> 이미지 빌드/푸시 -> GitOps worker.yaml image 태그 커밋 -> ArgoCD 가 worker 롤링
 #         -> initContainer 가 deploy.py 실행 -> 다음 run 부터 새 코드
 #
-# 브랜치를 머지 전에 클러스터에 올려 보려면 Actions > build > Run workflow 에서
-# ref 에 브랜치명을 적는다. 이 파일은 main 의 것이 실행되므로 그 브랜치에 build.yml 이
-# 없어도 된다. Prefect 환경은 하나라 worker 가 그 브랜치 이미지로 바뀌고, :main 태그는
-# 옮기지 않는다. 되돌리려면 ref 를 비우고 다시 실행한다. 절차는 docs/runbook.md.
+# 브랜치 테스트는 workflow_dispatch 의 environment=stg, ref=<브랜치>로 한다.
+# GitOps 는 항상 불변 version-sha 태그를 가리키고 :stg/:prod 는 편의용 별칭이다.
 name: build
 
 on:
@@ -19,6 +17,12 @@ on:
       - "**.md"
   workflow_dispatch:
     inputs:
+      environment:
+        description: "배포 환경"
+        type: choice
+        options: [stg, prod]
+        default: stg
+        required: true
       ref:
         description: "빌드해 배포할 브랜치/태그/sha. 비우면 main"
         required: false
@@ -36,7 +40,6 @@ concurrency:
 env:
   IMAGE: ghcr.io/team-neki/team-neki-workflow
   GITOPS_REPO: Team-Neki/Team-Neki-GitOps
-  GITOPS_PATH: overlays/prefect/worker.yaml
 
 jobs:
   build:
@@ -82,6 +85,7 @@ jobs:
         id: tag
         env:
           INPUT_REF: ${{ inputs.ref }}
+          DEPLOY_ENV: ${{ inputs.environment || 'prod' }}
         run: |
           version=$(sed -n 's/^version = "\(.*\)"/\1/p' pyproject.toml)
           sha=$(git rev-parse --short=7 HEAD)
@@ -89,8 +93,18 @@ jobs:
           # "Use workflow from" 을 다른 브랜치로 골라 실행했으면 그 브랜치다.
           ref="${INPUT_REF:-$GITHUB_REF_NAME}"
           ref="${ref#refs/heads/}"
+          if [ "$DEPLOY_ENV" = "prod" ] && [ "$ref" != "main" ]; then
+            echo "::error::prod 에는 main 만 배포할 수 있다. 브랜치 테스트는 stg 를 선택한다."
+            exit 1
+          fi
           echo "tag=${version}-${sha}" >> "$GITHUB_OUTPUT"
           echo "ref=${ref}" >> "$GITHUB_OUTPUT"
+          echo "environment=${DEPLOY_ENV}" >> "$GITHUB_OUTPUT"
+          if [ "$DEPLOY_ENV" = "prod" ]; then
+            echo "gitops_path=overlays/prefect/worker.yaml" >> "$GITHUB_OUTPUT"
+          else
+            echo "gitops_path=overlays/prefect-stg/worker.yaml" >> "$GITHUB_OUTPUT"
+          fi
           if [ "$ref" = "main" ]; then
             echo "main=true" >> "$GITHUB_OUTPUT"
           else
@@ -118,6 +132,14 @@ jobs:
           docker tag "$IMAGE:$TAG" "$IMAGE:main"
           docker push "$IMAGE:main"
 
+      - name: Push environment tag
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+          DEPLOY_ENV: ${{ steps.tag.outputs.environment }}
+        run: |
+          docker tag "$IMAGE:$TAG" "$IMAGE:$DEPLOY_ENV"
+          docker push "$IMAGE:$DEPLOY_ENV"
+
       # GITOPS_PAT: Team-Neki 조직 secret. GitOps 레포에 contents:write 권한이 있는 PAT 로
       # 다른 저장소 CI 와 같은 것을 쓴다. 조직 설정에서 이 저장소에 열려 있어야 한다.
       - uses: actions/checkout@v5
@@ -132,6 +154,8 @@ jobs:
           TAG: ${{ steps.tag.outputs.tag }}
           REF: ${{ steps.tag.outputs.ref }}
           IS_MAIN: ${{ steps.tag.outputs.main }}
+          DEPLOY_ENV: ${{ steps.tag.outputs.environment }}
+          GITOPS_PATH: ${{ steps.tag.outputs.gitops_path }}
         run: |
           # admin-web 과 같은 방식. worker.yaml 은 register-deployments initContainer 와
           # prefect-worker 컨테이너 두 곳에서 이 이미지를 참조하므로 둘을 같은 태그로 바꿔야 한다.
@@ -155,7 +179,7 @@ jobs:
           fi
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          msg="chore(prefect): update image to $TAG"
+          msg="chore(prefect-$DEPLOY_ENV): update image to $TAG"
           # 브랜치 배포는 GitOps 이력에서 구분되게 남긴다. 다음 main merge 가 덮는다.
           [ "$IS_MAIN" = "true" ] || msg="$msg (from $REF, 머지 전 테스트 배포)"
           git commit -am "$msg"
