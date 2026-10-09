@@ -109,9 +109,9 @@ Actions는 Prefect 서버에 접근하지 않습니다. 서버가 외부에 노�
 클러스터 안에서 일어납니다.
 
 ```text
-main merge
-  -> build.yml      이미지 빌드, ghcr.io/team-neki/team-neki-workflow:<version>-<sha7> 와 :main 푸시
-  -> build.yml      Team-Neki-GitOps overlays/prefect/worker.yaml 의 image 태그 커밋
+main merge (prod) / Actions 수동 실행 environment=stg (stg)
+  -> build.yml      이미지 빌드, ghcr.io/team-neki/team-neki-workflow:<version>-<sha7> 와 :prod/:stg 푸시
+  -> build.yml      해당 환경의 GitOps worker.yaml image 태그 커밋
   -> ArgoCD         worker Deployment 롤링
   -> initContainer  /opt/prefect 에서 python deploy.py (등록 갱신, pause 보존)
   -> 다음 flow run 부터 새 이미지
@@ -133,6 +133,13 @@ flow run이 work pool 기본 이미지(베이스 prefect 이미지)로 떠서 `f
   설치가 베이스의 prefect를 덮어써 prefect-kubernetes가 깨지고 worker가 뜨지 않음.
   `make image`가 버전을 assert함
 - 매니페스트와 RBAC은 GitOps 레포 `overlays/prefect/`에 있음. 여기 두지 않음
+- Prefect API 와 메타DB 는 공통. 기존 `prefect` worker/work pool/Job 은 prod,
+  `prefect-stg` worker/`neki-stg-pool`/Job 은 staging. stg deployment 는 `-stg`
+  접미사로 구분하고 처음에는 pause 상태로 등록함. 각 네임스페이스의
+  `prefect-workflow` Secret 을 사용함.
+  검색 색인 Batch Job 은 flow run 파드의 service account namespace 를 읽어 같은
+  네임스페이스에 생성함.
+  staging 설정은 GitOps `overlays/prefect-stg/` 에 있음
 
 ## 수집 파이프라인
 
