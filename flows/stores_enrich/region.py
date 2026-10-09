@@ -127,7 +127,7 @@ def from_manual(
 ) -> EnrichedStore:
     """tb_photo_booth_manual 한 행(table.read_manual)을 판정 전 행으로 옮긴다.
 
-    platform 은 브랜드의 tb_brand.platform, idx 는 manual-<id> 다. 수집 사이클이
+    platform 은 브랜드의 tb_brand.code, idx 는 manual-<id> 다. 수집 사이클이
     없으므로 source_dt 는 이번 사이클이고, collected_at 은 관리자가 마지막으로 고친
     시각(updated_at)이다. 좌표는 관리자가 준 것이라 coordinate_source 는 manual 이다.
     법정동은 수집 지점과 같은 길(재사용 또는 Kakao)로 정한다.

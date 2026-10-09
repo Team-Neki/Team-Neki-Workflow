@@ -38,7 +38,7 @@
   배치는 원천 키가 있는 행에만 INSERT/UPDATE합니다. 입력의 `source_type`을 그대로 쓰고,
   기존 행과 `source_type`이 다르면 갱신하지 않습니다. 원천 키가 없는 LEGACY와
   어드민이 마스터에 직접 넣은 MANUAL은 건드리지 않습니다.
-- 관리자 등록 지점(`tb_photo_booth_manual`)은 원천 키 `(tb_brand.platform, manual-<id>)`로
+- 관리자 등록 지점(`tb_photo_booth_manual`)은 원천 키 `(tb_brand.code, manual-<id>)`로
   upsert합니다. 키가 있어 검색 카드와 `(platform, idx)`로 짝지어집니다.
   관리자 지점이 삭제(`deleted_at`)되어 enrich 입력에서 빠져도 마스터 행은 수집 지점과
   같이 지우지 않습니다. 노출 중지는 `admin_hidden`으로 합니다.

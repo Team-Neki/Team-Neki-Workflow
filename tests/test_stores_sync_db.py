@@ -50,7 +50,7 @@ def db():
             )
             connection.execute("""
                 CREATE TABLE tb_brand (
-                    id BIGSERIAL PRIMARY KEY, platform VARCHAR(32), deleted_at TIMESTAMP
+                    id BIGSERIAL PRIMARY KEY, code VARCHAR(30), deleted_at TIMESTAMP
                 );
                 CREATE TABLE tb_photo_booth_location (
                     id BIGSERIAL PRIMARY KEY, map_id VARCHAR(100) NOT NULL,
@@ -65,7 +65,7 @@ def db():
                     source_dt DATE, collected_at TIMESTAMP, b_code CHAR(10),
                     source_type VARCHAR(16) NOT NULL DEFAULT 'COLLECTED'
                 );
-                INSERT INTO tb_brand(platform) VALUES ('PHOTOISM');
+                INSERT INTO tb_brand(code) VALUES ('PHOTOISM');
                 INSERT INTO tb_photo_booth_location (
                     map_id, brand_id, branch_name, address, location, created_at, updated_at
                 ) VALUES ('kakao-old', 1, '기존 지점', '기존 주소', ST_SetSRID(ST_MakePoint(127, 37), 4326),
@@ -211,7 +211,7 @@ def test_dry_run_is_read_only_and_predicts_inserts(db):
 
 def test_missing_brand_fails_without_partial_writes(db):
     db.execute("""INSERT INTO tb_photo_booth_enriched
-        SELECT 'LIFE_FOUR_CUT', '1', name, address, longitude, latitude, source_dt, collected_at, b_code
+        SELECT 'LIFEFOURCUTS', '1', name, address, longitude, latitude, source_dt, collected_at, b_code
         FROM tb_photo_booth_enriched""")
     with pytest.raises(ValueError, match="매핑 누락"):
         run(db)
