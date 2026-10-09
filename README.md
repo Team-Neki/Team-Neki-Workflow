@@ -73,7 +73,7 @@ UI나 cron이 워크플로를 직접 실행하지는 않습니다. flow run 레�
 ```text
 s3://<bucket>/
   collect/
-    platform=LIFE_FOUR_CUT/
+    platform=LIFEFOURCUTS/
       dt=2026-08-02/                              대상 일자 (사이클)
         2026-08-02_040009.csv                     실행 시각
         _raw/2026-08-02_040009/page-001.html …    응답 원문. Athena 가 무시하는 숨김 폴더

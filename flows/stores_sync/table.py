@@ -124,7 +124,7 @@ def synchronize(
         stores = [SourceStore(**row) for row in cursor.fetchall()]
         ready, skipped = prepare(stores, cycle=cycle, min_expected=min_expected)
         cursor.execute(
-            "SELECT id, platform FROM tb_brand WHERE deleted_at IS NULL AND platform IS NOT NULL"
+            "SELECT id, code AS platform FROM tb_brand WHERE deleted_at IS NULL"
         )
         brands: dict[str, int] = {}
         for brand in cursor.fetchall():
@@ -134,7 +134,7 @@ def synchronize(
         missing_brands = {s.platform for s in ready} - brands.keys()
         if missing_brands:
             raise ValueError(
-                "tb_brand.platform 매핑 누락: " + ", ".join(sorted(missing_brands))
+                "tb_brand.code 매핑 누락: " + ", ".join(sorted(missing_brands))
             )
 
         cursor.execute(

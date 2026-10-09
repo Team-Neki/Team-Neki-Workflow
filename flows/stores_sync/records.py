@@ -45,7 +45,13 @@ def prepare(
     for row in stores:
         if row.source_type not in SOURCE_TYPES:
             raise ValueError(f"잘못된 source_type: {row.key} {row.source_type}")
-        if row.platform not in Platform or not row.idx.strip() or len(row.idx) > 64:
+        # 관리자 등록 지점은 수집하지 않는 브랜드일 수 있어 Platform 대신 tb_brand.code 로 검사한다
+        if (
+            not row.platform
+            or (row.source_type == "COLLECTED" and row.platform not in Platform)
+            or not row.idx.strip()
+            or len(row.idx) > 64
+        ):
             raise ValueError(f"잘못된 원천 키: {row.key}")
         if row.key in seen:
             raise ValueError(f"중복 원천 키: {row.key}")

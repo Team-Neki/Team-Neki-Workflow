@@ -101,17 +101,11 @@ def _read_manual(
 ) -> list[EnrichedStore]:
     """관리자 등록 지점(tb_photo_booth_manual)을 판정 전 행으로 읽는다.
 
-    브랜드에 platform 이 없어 뺀 지점은 경고로 남긴다. idx 가 manual-<id> 라
-    수집 지점과 키가 겹치지 않지만, 겹치면 수집 지점을 남긴다.
+    idx 가 manual-<id> 라 수집 지점과 키가 겹치지 않지만, 겹치면 수집 지점을 남긴다.
     """
     logger = get_run_logger()
 
-    records, no_platform = read_manual()
-    if no_platform:
-        logger.warning(
-            "브랜드에 tb_brand.platform 이 없는 관리자 등록 지점 %d건은 뺍니다.", no_platform
-        )
-
+    records = read_manual()
     seen = {(store.platform, store.idx) for store in collected}
     stores: list[EnrichedStore] = []
     for record in records:

@@ -142,12 +142,11 @@ def read_current() -> dict[tuple[str, str], EnrichedStore]:
     return {(row.platform, row.idx): row for row in rows}
 
 
-def read_manual() -> tuple[list[dict[str, Any]], int]:
-    """관리자 등록 지점 중 살아 있는 것을 읽는다. (적재할 행, 브랜드 platform 이 없어 뺀 수).
+def read_manual() -> list[dict[str, Any]]:
+    """관리자 등록 지점 중 살아 있는 것을 읽는다.
 
-    platform 은 브랜드의 tb_brand.platform 이다. 서버 색인이 그 값으로 브랜드를 찾으므로
-    platform 이 없는 브랜드(수집하지 않는 브랜드)의 지점은 넣어도 색인에서 빠진다. 그래서
-    여기서 빼고 건수만 돌려준다. 삭제된 브랜드의 지점도 뺀다.
+    platform 은 브랜드의 tb_brand.code 다. 서버 색인이 그 값으로 브랜드를 찾는다.
+    수집하지 않는 브랜드의 지점도 담는다. 삭제된 브랜드의 지점은 뺀다.
 
     테이블이 없으면(서버 마이그레이션 전) 빈 목록이다. 수집 지점만으로 enrich 는 돈다.
     """
@@ -161,10 +160,10 @@ def read_manual() -> tuple[list[dict[str, Any]], int]:
                     "%s 이 없어 관리자 등록 지점 없이 보강합니다. 서버 마이그레이션(V35)을 확인하세요.",
                     MANUAL_TABLE,
                 )
-                return [], 0
+                return []
             cursor.execute(
                 f"""
-                SELECT m.id, b.platform, m.branch_name, m.address, m.phone,
+                SELECT m.id, b.code AS platform, m.branch_name, m.address, m.phone,
                        ST_X(m.location) AS longitude, ST_Y(m.location) AS latitude,
                        m.updated_at
                 FROM {MANUAL_TABLE} m
@@ -173,10 +172,7 @@ def read_manual() -> tuple[list[dict[str, Any]], int]:
                 ORDER BY m.id
                 """
             )
-            rows = cursor.fetchall()
-
-    records = [row for row in rows if row["platform"] is not None]
-    return records, len(rows) - len(records)
+            return cursor.fetchall()
 
 
 @task
