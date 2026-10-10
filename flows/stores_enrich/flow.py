@@ -130,11 +130,13 @@ def _report(
     counts: Counter,
     swapped: dict[str, int],
     mismatched_count: int,
+    removed: dict[str, list[EnrichedStore]] | None = None,
 ) -> list[str]:
     """Discord 알림 본문. 브랜드마다 S3 에서 읽은 건수와 enriched 에 담긴 건수를 나란히 둔다.
 
     s3 와 enriched 가 다르면 (platform, idx) 중복으로 버린 것이다. manual 은 관리자
     등록 지점이고 no_bcode 는 법정동 코드를 못 붙인 지점(no_coordinate, failed)이다.
+    removed 는 직전 세대에 있다가 빠진 지점이다(_removed). None 이면 비교하지 못한 것이다.
     """
     collected = Counter(s.platform for s in enriched if s.source_type == "COLLECTED")
     manual = Counter(s.platform for s in enriched if s.source_type == "MANUAL")
@@ -180,7 +182,41 @@ def _report(
         lines.append(f"⚠️ tb_legal_dong 에 없는 법정동 코드 {swapped['unknown_codes']}건")
     elif swapped["unknown_codes"] < 0:
         lines.append("⚠️ tb_legal_dong 이 없어 법정동 코드를 대조하지 못했습니다")
+
+    if removed:
+        total = sum(len(stores) for stores in removed.values())
+        lines.append(f"직전 세대에서 빠진 지점 **{total:,}건**")
+        for name, stores in sorted(removed.items()):
+            names = [store.name for store in stores[:MAX_REMOVED_NAMES]]
+            rest = len(stores) - len(names)
+            suffix = f" 외 {rest:,}건" if rest else ""
+            lines.append(f"- {name} {len(stores):,}건: {', '.join(names)}{suffix}")
     return lines
+
+
+# 브랜드가 통째로 빠지면 수백 건이다. 다 적으면 embed 상한(4096자)에 잘린다.
+MAX_REMOVED_NAMES = 10
+
+
+def _removed(
+    previous: dict[tuple[str, str], EnrichedStore], enriched: list[EnrichedStore]
+) -> dict[str, list[EnrichedStore]] | None:
+    """직전 세대에 있었는데 이번 적재에 없는 지점을 브랜드별로 모은다.
+
+    previous 는 재사용 판정에 쓰려고 이미 읽은 직전 세대다. 비어 있으면 첫 적재이거나
+    컬럼이 다른 세대라 읽지 않은 것이므로 비교하지 않고 None 을 돌려준다. 지점은
+    이름순이다.
+    """
+    if not previous:
+        return None
+    current = {(store.platform, store.idx) for store in enriched}
+    removed: dict[str, list[EnrichedStore]] = {}
+    for key, store in previous.items():
+        if key not in current:
+            removed.setdefault(store.platform, []).append(store)
+    for stores in removed.values():
+        stores.sort(key=lambda store: store.name)
+    return removed
 
 
 @flow(
@@ -276,6 +312,14 @@ def stores_enrich(
     result["table"] = swapped
     notify(
         "지점 법정동 보강 완료",
-        lambda: _report(cycle, brands, enriched, counts, swapped, len(suspicious)),
+        lambda: _report(
+            cycle,
+            brands,
+            enriched,
+            counts,
+            swapped,
+            len(suspicious),
+            _removed(previous, enriched),
+        ),
     )
     return result
