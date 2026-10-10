@@ -193,3 +193,49 @@ def test_report_lines_up_s3_and_enriched_per_brand():
     assert any(line.split() == ["total", "4", "3", "1", "1"] for line in lines)
     assert "HARU_FILM: 쓸 적재물이 없어 뺐습니다" in text
     assert "PICDOT: 2026-09-24 사이클로 대신했습니다" in text
+
+
+def _store(platform, idx, name):
+    return SimpleNamespace(platform=platform, idx=idx, name=name)
+
+
+def test_removed_groups_missing_stores_by_brand():
+    previous = {
+        ("PHOTOISM", "1"): _store("PHOTOISM", "1", "포토이즘 역삼점"),
+        ("PHOTOISM", "2"): _store("PHOTOISM", "2", "포토이즘 강남점"),
+        ("PHOTOISM", "manual-7"): _store("PHOTOISM", "manual-7", "포토이즘 신사점"),
+        ("PICDOT", "1"): _store("PICDOT", "1", "픽닷 홍대점"),
+    }
+    enriched = [_store("PHOTOISM", "1", "포토이즘 역삼점"), _store("PICDOT", "1", "픽닷 홍대점")]
+    removed = flow_module._removed(previous, enriched)
+    assert {name: [s.name for s in stores] for name, stores in removed.items()} == {
+        "PHOTOISM": ["포토이즘 강남점", "포토이즘 신사점"]
+    }
+
+
+def test_removed_is_not_compared_without_previous_generation():
+    assert flow_module._removed({}, [_store("PHOTOISM", "1", "포토이즘 역삼점")]) is None
+
+
+def test_report_lists_removed_stores_per_brand(monkeypatch):
+    monkeypatch.setattr(flow_module, "MAX_REMOVED_NAMES", 2)
+    removed = {
+        "PICDOT": [_store("PICDOT", "1", "픽닷 홍대점")],
+        "PHOTOISM": [_store("PHOTOISM", str(i), f"포토이즘 {i}호점") for i in range(3)],
+    }
+    swapped = {"loaded": 1, "before": 5, "swapped": 1, "unknown_codes": 0}
+    lines = flow_module._report(
+        CYCLE, {}, [_enriched("PHOTOISM", "9")], Counter(ok=1), swapped, 0, removed
+    )
+    assert "직전 세대에서 빠진 지점 **4건**" in lines
+    assert "- PHOTOISM 3건: 포토이즘 0호점, 포토이즘 1호점 외 1건" in lines
+    assert "- PICDOT 1건: 픽닷 홍대점" in lines
+
+
+def test_report_omits_removed_section_when_nothing_is_missing():
+    swapped = {"loaded": 1, "before": 1, "swapped": 1, "unknown_codes": 0}
+    for removed in ({}, None):
+        lines = flow_module._report(
+            CYCLE, {}, [_enriched("PHOTOISM", "1")], Counter(ok=1), swapped, 0, removed
+        )
+        assert not any("빠진 지점" in line for line in lines)

@@ -175,11 +175,16 @@ enrich 가 끝나도 색인 Job 을 띄우지 않습니다. 묶으면 enrich 재
   관리자 등록 지점(`manual`), 법정동 코드를 못 붙인 지점(`no_bcode`). `s3` 와
   `enriched` 가 다르면 `(platform, idx)` 중복으로 버린 것
 - `failed` 로 빠진 브랜드와 `stale` 로 대신한 브랜드, `tb_legal_dong` 에 없는 코드를 경고로 붙임
+- 직전 세대에 있었는데 이번 적재에 없는 지점을 `(platform, idx)` 로 가려 브랜드별 건수와
+  지점 이름으로 붙임. 직전 세대는 재사용 판정에 쓰려고 이미 읽은 것(`read_current`)이라
+  DB 를 더 읽지 않음. 브랜드가 통째로 빠지면 수백 건이라 브랜드마다 이름은 10개까지만
+  보이고 나머지는 `외 N건`. 직전 세대를 읽지 못했으면(첫 적재, 컬럼이 다른 세대) 비교하지 않음
 - **알림 실패로 flow 를 실패시키지 않음.** 알림은 적재 커밋 뒤에 불리고, 발송·본문 조립의 어떤 예외도 경고로만 남김. 새면 이미 끝난 적재가 실패로 기록되고 재시도가 적재를 되풀이함
 
 구현 : `flows/common/discord.py:53` `def notify`,
 `flows/common/discord.py:96` `def notify_failure`,
-`flows/stores_enrich/flow.py:126` `def _report`
+`flows/stores_enrich/flow.py:126` `def _report`,
+`flows/stores_enrich/flow.py:201` `def _removed`
 
 ## 외부 의존과 장애
 
