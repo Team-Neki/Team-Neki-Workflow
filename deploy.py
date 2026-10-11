@@ -14,6 +14,7 @@ WORKFLOW_IMAGE 를 job_variables.image 로 넣어 flow run 파드가 같은 이�
 사용법:
     PREFECT_WORK_POOL=neki-pool python deploy.py
     PREFECT_WORK_POOL=neki-pool WORKFLOW_IMAGE=ghcr.io/team-neki/team-neki-workflow:main python deploy.py
+    PREFECT_WORK_POOL=neki-stg-pool python deploy.py --environment stg
 """
 
 import argparse
@@ -119,14 +120,29 @@ def main() -> None:
         help="flow run 컨테이너 이미지. job_variables.image 로 들어간다. "
         "이미지 안에서는 빌드 시 구운 WORKFLOW_IMAGE 가 기본값이다.",
     )
+    parser.add_argument(
+        "--environment",
+        choices=("prod", "stg"),
+        default=os.environ.get("PREFECT_ENVIRONMENT", "prod"),
+        help="공통 Prefect 서버의 deployment 구분. stg 는 이름에 -stg 를 붙인다.",
+    )
     args = parser.parse_args()
 
     found = list(collect())
     if not found:
         raise SystemExit("등록할 deployment가 없습니다.")
 
+    if args.environment == "stg":
+        for deployment in found:
+            deployment.name += "-stg"
+
     names = [full_name(deployment) for deployment in found]
     states = asyncio.run(read_states(names))
+
+    if args.environment == "stg":
+        for deployment in found:
+            if full_name(deployment) not in states:
+                deployment.paused = True
 
     if args.image:
         print(f"이미지: {args.image}")
