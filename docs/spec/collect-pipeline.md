@@ -354,7 +354,7 @@ initContainer 가 `deploy.py` 로 deployment 를 재등록하며, 다음 run 부
 버킷을 비우고 `tb_store_collect_manifest` 를 지운 뒤 한 번 돌려 확인합니다.
 
 구현 : `.github/workflows/build.yml:26` `ref:`,
-`.github/workflows/build.yml:158` `GITOPS_PATH:`,
+`.github/workflows/build.yml:167` `GITOPS_PATH:`,
 `Dockerfile:27` `ENV WORKFLOW_IMAGE`,
 `deploy.py:119` `WORKFLOW_IMAGE`
 
