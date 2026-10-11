@@ -20,8 +20,8 @@ sequenceDiagram
     participant API as Prefect 서버
 
     Dev->>GH: PR (ci.yml)
-    Dev->>GH: main merge (build.yml)
-    GH->>GHCR: push :<version>-<sha7>, :main
+    Dev->>GH: main merge (stg) 또는 수동 실행 (stg/prod)
+    GH->>GHCR: push :<version>-<sha7>, :stg 또는 :prod
     GH->>GitOps: 선택한 환경의 worker.yaml image 태그 커밋
     Argo->>GitOps: main 폴링
     Argo->>Worker: worker Deployment 롤링
@@ -29,13 +29,14 @@ sequenceDiagram
     API-->>Worker: 다음 flow run부터 새 이미지
 ```
 
-한 번 merge하면 다음 flow run부터 새 코드가 돕니다. 이미 실행 중인 flow run은 예전
+main 에 merge하면 staging 의 다음 flow run부터 새 코드가 돕니다. 이미 실행 중인 flow run은 예전
 이미지로 끝까지 갑니다. 태그는 `<pyproject version>-<git sha 7자리>`이며 `main` 태그도
 같은 이미지를 가리킵니다.
 
-Prefect 서버와 UI 는 공통입니다. `main` push 는 prod (`prefect` 네임스페이스,
-`neki-pool`), Actions 수동 실행에서 `environment=stg` 는 staging
-(`prefect-stg` 네임스페이스, `neki-stg-pool`) worker 를 갱신합니다. stg deployment
+Prefect 서버와 UI 는 공통입니다. `main` push 는 staging (`prefect-stg` 네임스페이스,
+`neki-stg-pool`), Actions 수동 실행에서 `environment=prod` 는 prod
+(`prefect` 네임스페이스, `neki-pool`) worker 를 갱신합니다. 수동 실행의 기본 선택은
+`stg` 입니다. stg deployment
 이름에는 `-stg` 가 붙습니다. `:prod`/`:stg` 별칭도 푸시하지만 GitOps 는 불변
 version-SHA 태그를 사용합니다.
 새 stg deployment 는 처음 등록할 때 pause 상태로 생성됩니다. 수동 실행과 데이터
@@ -210,6 +211,12 @@ stg 에 main 을 다시 배포할 수 있습니다. `environment=prod` 에는 ma
 
 `ci.yml` 은 `pull_request` 에만 돌므로 이 경로로는 `make check` 가 실행되지 않습니다.
 PR 의 ci 가 초록인 브랜치만 올리세요.
+
+### 운영에 배포하기
+
+main merge 는 staging 만 갱신합니다. staging 에서 확인한 뒤 Actions 탭 > build >
+Run workflow 에서 `Use workflow from=main`, `environment=prod`, `ref` 는 비워 둔 채
+실행합니다. prod 배포는 수동 실행에서만 허용됩니다.
 
 ### 클러스터 밖에서 직접 등록하기
 

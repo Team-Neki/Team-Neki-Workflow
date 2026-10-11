@@ -1,4 +1,4 @@
-# main 에 merge 되면 prod, 수동 실행은 선택한 환경의 이미지를 배포한다.
+# main 에 merge 되면 stg, prod 는 수동 실행에서만 배포한다.
 #
 # Prefect 서버는 외부에 노출되지 않으므로 여기서 서버를 건드리지 않는다.
 # deployment 등록(deploy.py)은 워커 파드의 initContainer 가 클러스터 안에서 한다.
@@ -85,7 +85,8 @@ jobs:
         id: tag
         env:
           INPUT_REF: ${{ inputs.ref }}
-          DEPLOY_ENV: ${{ inputs.environment || 'prod' }}
+          DEPLOY_ENV: ${{ github.event_name == 'push' && 'stg' || inputs.environment }}
+          EVENT_NAME: ${{ github.event_name }}
         run: |
           version=$(sed -n 's/^version = "\(.*\)"/\1/p' pyproject.toml)
           sha=$(git rev-parse --short=7 HEAD)
@@ -93,6 +94,14 @@ jobs:
           # "Use workflow from" 을 다른 브랜치로 골라 실행했으면 그 브랜치다.
           ref="${INPUT_REF:-$GITHUB_REF_NAME}"
           ref="${ref#refs/heads/}"
+          if [ "$DEPLOY_ENV" != "stg" ] && [ "$DEPLOY_ENV" != "prod" ]; then
+            echo "::error::배포 환경은 stg 또는 prod 여야 한다."
+            exit 1
+          fi
+          if [ "$DEPLOY_ENV" = "prod" ] && [ "$EVENT_NAME" != "workflow_dispatch" ]; then
+            echo "::error::prod 는 수동 실행에서만 배포할 수 있다."
+            exit 1
+          fi
           if [ "$DEPLOY_ENV" = "prod" ] && [ "$ref" != "main" ]; then
             echo "::error::prod 에는 main 만 배포할 수 있다. 브랜치 테스트는 stg 를 선택한다."
             exit 1

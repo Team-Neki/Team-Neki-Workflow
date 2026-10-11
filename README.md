@@ -363,7 +363,7 @@ make serve PORT=4300
 푸시와 GitOps 레포 태그 커밋 둘뿐입니다.
 
 ```text
-main merge (prod) / Actions 수동 실행 environment=stg (stg)
+main merge (stg) / Actions 수동 실행 environment=stg|prod (선택한 환경)
   -> build.yml      이미지 빌드, ghcr.io/team-neki/team-neki-workflow:<version>-<sha7> 와 :prod/:stg 푸시
   -> build.yml      해당 환경의 GitOps worker.yaml 에 불변 image 태그 커밋
   -> ArgoCD         worker Deployment 롤링

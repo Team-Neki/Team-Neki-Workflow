@@ -109,7 +109,7 @@ Actions는 Prefect 서버에 접근하지 않습니다. 서버가 외부에 노�
 클러스터 안에서 일어납니다.
 
 ```text
-main merge (prod) / Actions 수동 실행 environment=stg (stg)
+main merge (stg) / Actions 수동 실행 environment=stg|prod (선택한 환경)
   -> build.yml      이미지 빌드, ghcr.io/team-neki/team-neki-workflow:<version>-<sha7> 와 :prod/:stg 푸시
   -> build.yml      해당 환경의 GitOps worker.yaml image 태그 커밋
   -> ArgoCD         worker Deployment 롤링
