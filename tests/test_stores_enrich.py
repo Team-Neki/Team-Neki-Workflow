@@ -74,7 +74,7 @@ def test_from_collect_marks_collected():
     assert row.source_type == "COLLECTED"
 
 
-def test_from_manual_uses_brand_platform_and_prefixed_idx():
+def test_from_manual_uses_brand_code_and_prefixed_idx():
     record = {
         "id": 7,
         "platform": "PHOTOISM",

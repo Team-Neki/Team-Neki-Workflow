@@ -107,8 +107,8 @@
 소유하고 enrich 는 읽기만 합니다. BACKEND-222 작업입니다.
 
 - `deleted_at` 이 NULL 이고 브랜드가 삭제되지 않은 행만 읽음
-- `platform` 은 브랜드의 `tb_brand.platform`. 서버 색인이 그 값으로 브랜드를 찾으므로
-  platform 이 없는 브랜드의 지점은 빼고 건수를 경고로 남김
+- `platform` 은 브랜드의 `tb_brand.code`. 서버 색인이 그 값으로 브랜드를 찾음.
+  수집하지 않는 브랜드의 지점도 담음 (BACKEND-228 전에는 `tb_brand.platform` 이 없는 브랜드를 뺐음)
 - `idx` 는 `manual-<id>`. 사이트 idx 와 겹치지 않게 접두를 붙임. 겹치면 수집 지점을 남김
 - `source_type` 은 수집 지점 `COLLECTED`, 관리자 등록 지점 `MANUAL`. 지점 마스터와 같은 어휘
 - `source_dt` 는 이번 사이클, `collected_at` 은 관리자가 마지막으로 고친 시각(`updated_at`),
@@ -152,7 +152,7 @@ index 가 읽는 현재 세대입니다. 세대 교체는 `tb_legal_dong` 과 �
   그쪽을 기다리지 않음
 
 구현 : `flows/stores_enrich/table.py:33` `TABLE`,
-`flows/stores_enrich/table.py:183` `def swap_table`,
+`flows/stores_enrich/table.py:179` `def swap_table`,
 `flows/stores_enrich/table.py:116` `def read_current`,
 `flows/stores_enrich/flow.py:48` `MIN_EXPECTED`
 
@@ -179,7 +179,7 @@ enrich 가 끝나도 색인 Job 을 띄우지 않습니다. 묶으면 enrich 재
 
 구현 : `flows/common/discord.py:53` `def notify`,
 `flows/common/discord.py:96` `def notify_failure`,
-`flows/stores_enrich/flow.py:126` `def _report`
+`flows/stores_enrich/flow.py:120` `def _report`
 
 ## 외부 의존과 장애
 

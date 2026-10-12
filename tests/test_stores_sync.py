@@ -31,7 +31,7 @@ def store(**overrides):
 
 def test_same_idx_in_different_platforms_are_distinct_and_names_remain_raw():
     rows, skipped = prepare(
-        [store(), store(platform="LIFE_FOUR_CUT")], cycle=CYCLE, min_expected=2
+        [store(), store(platform="LIFEFOURCUTS")], cycle=CYCLE, min_expected=2
     )
     assert len(rows) == 2
     assert rows[0].name == "포토이즘 강남점"
