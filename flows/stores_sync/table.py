@@ -117,7 +117,8 @@ def synchronize(
         require_schema(cursor)
         # 관리자 등록 지점(MANUAL)도 (platform, manual-<id>) 원천 키로 함께 동기화한다
         cursor.execute(
-            "SELECT platform, idx, name, address, longitude, latitude, source_dt, "
+            "SELECT platform, idx, name, address, ST_X(location) AS longitude, "
+            "ST_Y(location) AS latitude, source_dt, "
             "collected_at, b_code, source_type FROM tb_photo_booth_enriched "
             "ORDER BY platform, idx"
         )

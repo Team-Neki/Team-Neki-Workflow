@@ -12,6 +12,8 @@
   enrich가 함께 담은 관리자 등록 지점(`source_type = 'MANUAL'`, `idx = manual-<id>`,
   `docs/spec/enrich-pipeline.md`)도 같은 원천 키로 동기화합니다.
   enriched에 `source_type` 열이 생기기 전(새 enrich가 한 번 돌기 전)에는 실패합니다.
+  좌표는 enriched의 `location`(`geometry(Point, 4326)`)을 `ST_X`/`ST_Y`로 풀어 읽으므로
+  `location` 열이 생기기 전(BACKEND-244 뒤 enrich가 한 번 돌기 전)에도 실패합니다.
 - 외부 사이트, Kakao, S3는 부르지 않습니다. 접속은 기존 `DATABASE_URL`을 씁니다.
 - `target_date`는 허용할 수집 사이클의 상한이며 기본값은 run 예약일(KST)입니다.
   미래 `source_dt`는 제외합니다. 과거 S3 스냅샷을 복원하는 백필은 아닙니다.
@@ -75,7 +77,7 @@
   지점 INSERT/UPDATE, S3 업로드, 검색 색인 실행은 하지 않습니다.
 
 구현 : `flows/stores_sync/table.py:103` `def synchronize`,
-`flows/stores_sync/table.py:194` `def sync_locations`
+`flows/stores_sync/table.py:195` `def sync_locations`
 
 ## 조회와 색인 연결의 후속 계약
 

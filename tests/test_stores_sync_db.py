@@ -61,7 +61,7 @@ def db():
                 );
                 CREATE TABLE tb_photo_booth_enriched (
                     platform VARCHAR(32), idx VARCHAR(64), name VARCHAR(255), address VARCHAR(255),
-                    longitude DOUBLE PRECISION, latitude DOUBLE PRECISION,
+                    location geometry(Point, 4326),
                     source_dt DATE, collected_at TIMESTAMP, b_code CHAR(10),
                     source_type VARCHAR(16) NOT NULL DEFAULT 'COLLECTED'
                 );
@@ -77,7 +77,7 @@ def db():
             connection.execute("""
                 INSERT INTO tb_photo_booth_enriched VALUES
                     ('PHOTOISM', 'official-1', '포토이즘 강남점', '서울 강남구 역삼동 1',
-                     127.03, 37.5, '2026-09-27', '2026-09-27 04:00', '1168010100');
+                     'SRID=4326;POINT(127.03 37.5)', '2026-09-27', '2026-09-27 04:00', '1168010100');
             """)
             yield connection
         finally:
@@ -163,7 +163,7 @@ def manual(db):
 
 def test_manual_enriched_rows_sync_as_manual_with_source_key(db):
     db.execute("""INSERT INTO tb_photo_booth_enriched
-        SELECT platform, 'manual-1', '관리자 지점', address, longitude, latitude,
+        SELECT platform, 'manual-1', '관리자 지점', address, location,
             source_dt, collected_at, b_code, 'MANUAL' FROM tb_photo_booth_enriched""")
     assert run(db)["inserted"] == 2
     first = manual(db)
@@ -211,7 +211,7 @@ def test_dry_run_is_read_only_and_predicts_inserts(db):
 
 def test_missing_brand_fails_without_partial_writes(db):
     db.execute("""INSERT INTO tb_photo_booth_enriched
-        SELECT 'LIFEFOURCUTS', '1', name, address, longitude, latitude, source_dt, collected_at, b_code
+        SELECT 'LIFEFOURCUTS', '1', name, address, location, source_dt, collected_at, b_code
         FROM tb_photo_booth_enriched""")
     with pytest.raises(ValueError, match="매핑 누락"):
         run(db)
@@ -220,7 +220,7 @@ def test_missing_brand_fails_without_partial_writes(db):
 
 def test_write_error_rolls_back_prior_insert(db):
     db.execute("""INSERT INTO tb_photo_booth_enriched
-        SELECT platform, 'official-2', '거부 지점', address, longitude, latitude,
+        SELECT platform, 'official-2', '거부 지점', address, location,
             source_dt, collected_at, b_code FROM tb_photo_booth_enriched;
         ALTER TABLE tb_photo_booth_location ADD CONSTRAINT reject_fixture CHECK (branch_name != '거부 지점');""")
     with pytest.raises(psycopg.errors.CheckViolation):
