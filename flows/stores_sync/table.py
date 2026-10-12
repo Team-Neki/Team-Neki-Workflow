@@ -11,6 +11,7 @@ from flows.common.postgres import connect
 from flows.stores_sync.records import SourceStore, prepare
 
 TABLE = "tb_photo_booth_location"
+ENRICHED_TABLE = "tb_photo_booth_enriched"
 MIN_EXPECTED = 800
 SYNC_LOCK = 0x6E656B69_153
 REQUIRED_COLUMNS = {
@@ -29,6 +30,13 @@ REQUIRED_COLUMNS = {
     "override_b_code",
     "b_code",
     "admin_hidden",
+}
+
+# enriched 는 enrich 가 매 실행 새로 만든다. 열이 생기는 것은 그 변경을 담은 enrich 가
+# 한 번 돈 뒤다. 열 -> 그 열을 만든 변경
+REQUIRED_ENRICHED_COLUMNS = {
+    "source_type": "BACKEND-222",
+    "location": "BACKEND-244",
 }
 
 # override는 DB가 행 잠금을 획득한 뒤 현재 값으로 읽는다. Python에서 미리 읽어
@@ -100,6 +108,25 @@ def require_schema(cursor) -> None:
         )
 
 
+def require_enriched(cursor) -> None:
+    """읽을 enriched 열이 없으면 원문 SQL 오류 대신 무엇을 먼저 할지 알려 주고 멈춘다."""
+    cursor.execute(
+        "SELECT attname FROM pg_attribute WHERE attrelid = to_regclass(%s) "
+        "AND attnum > 0 AND NOT attisdropped",
+        (ENRICHED_TABLE,),
+    )
+    present = {r["attname"] for r in cursor.fetchall()}
+    if not present:
+        raise RuntimeError(f"{ENRICHED_TABLE} 이 없습니다. stores-enrich 를 먼저 실행하세요.")
+    missing = sorted(set(REQUIRED_ENRICHED_COLUMNS) - present)
+    if missing:
+        raise RuntimeError(
+            f"{ENRICHED_TABLE} 에 {', '.join(missing)} 열이 없습니다. "
+            + ", ".join(sorted({REQUIRED_ENRICHED_COLUMNS[c] for c in missing}))
+            + " 뒤 stores-enrich 를 한 번 실행한 다음 다시 실행하세요."
+        )
+
+
 def synchronize(
     connection, *, cycle: date, persist: bool, min_expected: int
 ) -> dict[str, Any]:
@@ -115,6 +142,7 @@ def synchronize(
                     "다른 지점 동기화가 실행 중입니다. 완료 후 다시 실행하세요."
                 )
         require_schema(cursor)
+        require_enriched(cursor)
         # 관리자 등록 지점(MANUAL)도 (platform, manual-<id>) 원천 키로 함께 동기화한다
         cursor.execute(
             "SELECT platform, idx, name, address, ST_X(location) AS longitude, "

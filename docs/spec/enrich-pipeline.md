@@ -149,6 +149,8 @@ index 가 읽는 현재 세대입니다. 세대 교체는 `tb_legal_dong` 과 �
   유한하지 않으면 NULL. `EnrichedStore` 는 경도·위도 두 필드 그대로이고 COPY 할 때
   EWKT 로 합치며, 직전 세대를 읽을 때 `ST_X` / `ST_Y` 로 되돌림. 이 열이 없는 직전
   세대(경도·위도 두 열)는 재사용하지 않으므로 배포 직후 첫 실행은 전 지점을 Kakao 에 물음
+  왕복이 원래 float 와 같아야 재사용이 되므로 `tests/test_stores_enrich_db.py` 가 실제
+  PostGIS 로 확인함 (`make test-stores-sync-db`)
 - `source_type` 으로 수집 지점과 관리자 등록 지점을 구분함. stores-sync 는 이 값을 그대로
   지점 마스터의 `source_type` 으로 씀 (`docs/spec/stores-sync.md`). 이 열이 없는 직전 세대는 재사용하지 않으므로
   배포 직후 첫 실행은 전 지점을 Kakao 에 물음

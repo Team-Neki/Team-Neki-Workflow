@@ -184,6 +184,19 @@ def test_manual_enriched_rows_sync_as_manual_with_source_key(db):
     ).fetchone() == ("관리자 수정",)
 
 
+def test_enriched_before_location_fails_with_guidance_before_writes(db):
+    db.execute("ALTER TABLE tb_photo_booth_enriched DROP COLUMN location")
+    with pytest.raises(RuntimeError, match="location 열이 없습니다. BACKEND-244 뒤 stores-enrich"):
+        run(db)
+    assert collected(db) is None
+
+
+def test_missing_enriched_table_fails_with_guidance(db):
+    db.execute("DROP TABLE tb_photo_booth_enriched")
+    with pytest.raises(RuntimeError, match="stores-enrich 를 먼저 실행하세요"):
+        run(db)
+
+
 def test_missing_manual_key_constraint_fails_before_writes(db):
     db.execute("""
         ALTER TABLE tb_photo_booth_location

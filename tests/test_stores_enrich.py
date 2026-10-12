@@ -327,13 +327,3 @@ def test_copy_row_location_is_null_without_finite_coordinate(longitude, latitude
     row = table._row(store(longitude=longitude, latitude=latitude))
     assert dict(zip(table.TABLE_COLUMNS, row))["location"] is None
 
-
-def test_previous_generation_select_restores_store_field_order():
-    assert table._SELECT.split(", ") == [
-        "ST_X(location) AS longitude"
-        if name == "longitude"
-        else "ST_Y(location) AS latitude"
-        if name == "latitude"
-        else name
-        for name in region.COLUMNS
-    ]
