@@ -206,8 +206,8 @@ flow run이 work pool 기본 이미지(베이스 prefect 이미지)로 떠서 `f
   prefect-kubernetes 가 이름으로 상태를 읽음
 - `prefect-kubernetes` 버전은 Dockerfile 베이스와 같아야 함. 다르면 이미지 안의
   것이 교체됨
-- BACKEND-65 가 `searchIndexJob` 을 넣기 전까지 스케줄 없음. 들어오면
-  `deployments/search_index.py` 에 05:30 KST cron 을 붙임
+- 스케줄은 `deployments/search_index.py` 의 05:30 KST cron. UI 에서 붙인 스케줄은
+  배포가 지우므로 스케줄은 코드에서만 바꿈
 
 ## 마스터 데이터 (법정동, 지하철 역)
 
