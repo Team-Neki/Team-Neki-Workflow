@@ -136,6 +136,8 @@ def _indexes(staging: str) -> str:
     return f"""
 -- index 가 법정동으로 부스를 모을 때.
 CREATE INDEX ON {staging} (b_code);
+-- 서버 지도 V2 가 화면 영역(ST_Contains)과 반경(bbox && 뒤 ST_DWithin)으로 부스를 찾을 때.
+CREATE INDEX ON {staging} USING GIST (location);
 """
 
 
