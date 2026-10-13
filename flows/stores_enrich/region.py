@@ -50,7 +50,8 @@ class EnrichedStore:
     """enrich 결과 한 행.
 
     필드 순서가 곧 COPY 열 순서다 (COLUMNS). table.py 의 DDL 도
-    같은 순서다. 한쪽만 고치면 값이 엉뚱한 컬럼에 들어간다.
+    같은 순서다. 한쪽만 고치면 값이 엉뚱한 컬럼에 들어간다. 경도·위도만 테이블에서
+    경도 자리의 location 한 열로 합쳐진다 (table.TABLE_COLUMNS).
 
     시각은 앱 DB 규약대로 시간대 없는 KST 벽시계다.
     """
@@ -158,7 +159,7 @@ def reusable(store: EnrichedStore, previous: EnrichedStore | None) -> bool:
 
     좌표가 같고 직전에 코드가 있어야 한다. 직전이 failed 였으면 좌표가 같아도
     다시 묻는다. 그날 Kakao 가 죽어서 비었을 수 있다. float 동등 비교다. CSV 와
-    DOUBLE PRECISION 왕복이 정확하므로 오차를 두지 않는다.
+    geometry(ST_X / ST_Y) 왕복이 정확하므로 오차를 두지 않는다.
     """
     return (
         previous is not None

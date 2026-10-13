@@ -177,7 +177,9 @@ flow run이 work pool 기본 이미지(베이스 prefect 이미지)로 떠서 `f
 - 무엇을 읽을지는 `manifest.read_cycle` 이 정함. enrich 가 따로 정하지 않음
 - enrich 결과는 Postgres 에만 저장. S3 는 collect 원본을 읽는 용도로만 사용
 - `EnrichedStore` 의 필드 순서가 COPY 열이자 DDL 순서. 필드를 더하면
-  `table._ddl` 도 같은 자리에 넣어야 함. 한쪽만 고치면 값이 엉뚱한 컬럼에 들어감
+  `table._ddl` 도 같은 자리에 넣어야 함. 한쪽만 고치면 값이 엉뚱한 컬럼에 들어감.
+  경도·위도만 예외로 테이블에서는 `location geometry(Point, 4326)` 한 열이고
+  `table._row` 가 COPY 때 합침
 - 이름은 앞머리 브랜드 표기 통일(`name.py` 의 `PREFIX_ALIASES`) 하나만 함. 같은 브랜드의
   다른 표기가 보이면 거기에 더함. 주소는 해석하지 않음. 계층은 `b_code` 자리수에, 이름은 `tb_legal_dong` 에
   있음. 브랜드·지점명 분리 같은 검색용 정규화는 서버 batch(`SearchNormalizer`)가 함.
@@ -204,8 +206,8 @@ flow run이 work pool 기본 이미지(베이스 prefect 이미지)로 떠서 `f
   prefect-kubernetes 가 이름으로 상태를 읽음
 - `prefect-kubernetes` 버전은 Dockerfile 베이스와 같아야 함. 다르면 이미지 안의
   것이 교체됨
-- BACKEND-65 가 `searchIndexJob` 을 넣기 전까지 스케줄 없음. 들어오면
-  `deployments/search_index.py` 에 05:30 KST cron 을 붙임
+- 스케줄은 `deployments/search_index.py` 의 05:30 KST cron. UI 에서 붙인 스케줄은
+  배포가 지우므로 스케줄은 코드에서만 바꿈
 
 ## 마스터 데이터 (법정동, 지하철 역)
 
