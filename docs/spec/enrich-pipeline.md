@@ -117,7 +117,7 @@
 - 하한(800)은 수집 지점만 셈. 관리자 등록 지점이 수집 장애를 가리지 않게 함
 - 테이블이 없으면(서버 마이그레이션 전) 경고 후 수집 지점만으로 진행함
 
-구현 : `flows/stores_enrich/table.py:191` `def read_manual`,
+구현 : `flows/stores_enrich/table.py:193` `def read_manual`,
 `flows/stores_enrich/region.py:126` `def from_manual`,
 `flows/stores_enrich/region.py:41` `MANUAL_IDX_PREFIX`,
 `flows/stores_enrich/flow.py:99` `def _read_manual`
@@ -154,14 +154,18 @@ index 가 읽는 현재 세대입니다. 세대 교체는 `tb_legal_dong` 과 �
 - `source_type` 으로 수집 지점과 관리자 등록 지점을 구분함. stores-sync 는 이 값을 그대로
   지점 마스터의 `source_type` 으로 씀 (`docs/spec/stores-sync.md`). 이 열이 없는 직전 세대는 재사용하지 않으므로
   배포 직후 첫 실행은 전 지점을 Kakao 에 물음
+- 인덱스는 COPY 뒤 스왑 전에 staging 에 건다. `b_code` (index 가 법정동으로 부스를 모을 때)와
+  `location` GIST (서버 지도 V2 가 화면 영역·반경으로 부스를 찾을 때, BACKEND-250) 둘.
+  세대마다 새 테이블이라 서버 Flyway 가 아니라 여기서 걸어야 다음 세대에도 남음
 - 시각 컬럼은 시간대 없는 `TIMESTAMP` 에 KST 벽시계
 - BACKEND-114 의 `tb_temp_photo_booth` 와 별도 테이블. enrich 는 S3 를 읽으므로
   그쪽을 기다리지 않음
 
 구현 : `flows/stores_enrich/table.py:38` `TABLE`,
-`flows/stores_enrich/table.py:225` `def swap_table`,
-`flows/stores_enrich/table.py:162` `def read_current`,
+`flows/stores_enrich/table.py:227` `def swap_table`,
+`flows/stores_enrich/table.py:164` `def read_current`,
 `flows/stores_enrich/table.py:94` `def _row`,
+`flows/stores_enrich/table.py:134` `def _indexes`,
 `flows/stores_enrich/flow.py:48` `MIN_EXPECTED`
 
 ## 색인은 별도 flow 가 띄운다
