@@ -28,10 +28,10 @@ enrich flow 끝에서 색인을 부르지 않습니다. 묶으면 enrich 재시�
   트랜잭션이라 두 실행의 build 가 swap 보다 먼저 끝나면 두 번째 swap 이 첫 번째를
   되돌려 직전 세대를 서빙하고, 둘 다 COMPLETED 라 알림도 없음
 
-구현 : `flows/search_index/flow.py:25` `def search_index`,
-`flows/search_index/flow.py:33` `cycle = target_date or cycle_date()`,
-`deployments/search_index.py:29` `concurrency_limit=1,`,
-`deployments/search_index.py:30` `schedule=Cron("30 5 * * *"`
+구현 : `src/neki_workflow/flows/search_index/flow.py:25` `def search_index`,
+`src/neki_workflow/flows/search_index/flow.py:33` `cycle = target_date or cycle_date()`,
+`src/neki_workflow/deployments/search_index.py:29` `concurrency_limit=1,`,
+`src/neki_workflow/deployments/search_index.py:30` `schedule=Cron("30 5 * * *"`
 
 ## Job 계약
 
@@ -63,10 +63,10 @@ flow 실패입니다. 환경변수가 없으면 경고 후 끝납니다. 로컬�
 - flow run 파드는 SA `prefect-worker`. base job template 기본값이라 deployment 는
   지정하지 않음. Role 이 jobs 생성과 pods/log 조회를 허용함
 
-구현 : `flows/search_index/job.py:37` `IMAGE_ENV`,
-`flows/search_index/job.py:56` `def manifest`,
-`flows/search_index/job.py:120` `async def _wait_for_completion`,
-`flows/search_index/job.py:127` `def run_search_index`
+구현 : `src/neki_workflow/flows/search_index/job.py:37` `IMAGE_ENV`,
+`src/neki_workflow/flows/search_index/job.py:56` `def manifest`,
+`src/neki_workflow/flows/search_index/job.py:120` `async def _wait_for_completion`,
+`src/neki_workflow/flows/search_index/job.py:127` `def run_search_index`
 
 ## 외부 의존과 장애
 

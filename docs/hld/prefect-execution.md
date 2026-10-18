@@ -45,7 +45,7 @@ flowchart LR
 
 worker와 flow run(Job 파드)이 같은 이미지입니다. 이미지에 `WORKFLOW_IMAGE`로 자기
 참조가 구워져 있고 `deploy.py`가 이를 `job_variables.image`에 넣습니다. 이게 없으면
-flow run이 work pool 기본 이미지(베이스 prefect 이미지)로 떠서 `flows`를 찾지
+flow run이 work pool 기본 이미지(베이스 prefect 이미지)로 떠서 `neki_workflow.flows`를 찾지
 못합니다.
 
 - entrypoint가 cwd 기준 상대경로라 worker와 Job 모두 `/opt/prefect`에서 실행됨

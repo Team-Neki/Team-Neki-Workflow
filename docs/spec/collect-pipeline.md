@@ -13,8 +13,9 @@
 
 ## 범위
 
-다루는 것은 지점 수집(collect)입니다. 브랜드 11개의 지점 목록을 받아 S3 와
-Postgres 에 남기는 데까지입니다. 뒤 단계 enrich 는 `docs/spec/enrich-pipeline.md`
+다루는 것은 지점 수집(collect)입니다. 구현은 `src/neki_workflow/flows/stores/collect/`
+아래에 총괄 flow와 브랜드별 수집기로 나뉩니다. 브랜드 11개의 지점 목록을 받아
+S3 와 Postgres 에 남기는 데까지입니다. 뒤 단계 enrich 는 `docs/spec/enrich-pipeline.md`
 가 정본이고 index 는 Team-Neki-Server 의 batch 잡입니다. 이 문서는 그 단계들이
 지켜야 할 읽기 계약을 정합니다.
 
@@ -36,7 +37,7 @@ Postgres 에 남기는 데까지입니다. 뒤 단계 enrich 는 `docs/spec/enri
 값을 해석하지 않습니다. 모든 브랜드가 한 스키마를 쓰고, 사이트가 주지 않는 필드는
 `None` 입니다.
 
-구현 : `flows/common/store.py:29` `class CollectedStore`
+구현 : `src/neki_workflow/flows/stores/common/store.py:29` `class CollectedStore`
 
 ### 좌표 보정만 collect 안에서 합니다
 
@@ -54,10 +55,10 @@ Postgres 에 남기는 데까지입니다. 뒤 단계 enrich 는 `docs/spec/enri
 주소는 원문 그대로 질의에 넣고, 0건이면 `<주소 앞 2토큰> <상호명>` 으로 한 번 더
 묻습니다. 키워드검색을 먼저 쓰지 않는 이유는 전국의 동명 가게를 집을 수 있어서입니다.
 
-구현 : `flows/common/geocode.py:138` `def fill_coordinates`,
-`flows/common/geocode.py:45` `GIVE_UP_AFTER`,
-`flows/common/geocode.py:32` `REGION_TOKENS`,
-`flows/common/store.py:47` `coordinate_source`
+구현 : `src/neki_workflow/flows/stores/common/geocode.py:138` `def fill_coordinates`,
+`src/neki_workflow/flows/stores/common/geocode.py:45` `GIVE_UP_AFTER`,
+`src/neki_workflow/flows/stores/common/geocode.py:32` `REGION_TOKENS`,
+`src/neki_workflow/flows/stores/common/store.py:47` `coordinate_source`
 
 ## 대상 브랜드와 수집원
 
@@ -75,11 +76,11 @@ imweb 위젯은 범위를 벗어난 페이지가 빈 응답이 아니라 마지�
 45건까지만 꺼낼 수 있어 좌표 사각형을 넷으로 나눠 재귀하고, 수집 뒤 `total_count`
 와 건수를 대조합니다.
 
-구현 : `flows/stores_collect/flow.py:30` `BRANDS`,
-`flows/common/imweb_map.py:180` `def collect_board`,
-`flows/common/imweb_map.py:32` `MAX_PAGES`,
-`flows/common/kakao.py:143` `def search_all`,
-`flows/common/kakao.py:29` `MAX_EXPOSED`
+구현 : `src/neki_workflow/flows/stores/collect/flow.py:30` `BRANDS`,
+`src/neki_workflow/flows/stores/common/imweb_map.py:180` `def collect_board`,
+`src/neki_workflow/flows/stores/common/imweb_map.py:32` `MAX_PAGES`,
+`src/neki_workflow/flows/stores/common/kakao.py:143` `def search_all`,
+`src/neki_workflow/flows/stores/common/kakao.py:29` `MAX_EXPOSED`
 
 ## 산출물 : S3
 
@@ -107,14 +108,14 @@ s3://<bucket>/
 - raw 객체에 태그 `kind=raw`. lifecycle 은 prefix 나 태그로만 걸리는데 raw 가
   파티션 안에 있어 prefix 로는 못 잡음. 코드는 지우지 않음
 
-구현 : `flows/common/storage.py:67` `COLLECT_PREFIX`,
-`flows/common/storage.py:71` `RAW_DIR`,
-`flows/common/storage.py:73` `RUN_AT_FORMAT`,
-`flows/common/storage.py:112` `def partition`,
-`flows/common/storage.py:162` `def put_stores`,
-`flows/common/storage.py:231` `def put_raw`,
-`flows/common/storage.py:130` `def _content_type`,
-`flows/common/storage.py:261` `Tagging="kind=raw"`
+구현 : `src/neki_workflow/flows/stores/common/storage.py:67` `COLLECT_PREFIX`,
+`src/neki_workflow/flows/stores/common/storage.py:71` `RAW_DIR`,
+`src/neki_workflow/flows/stores/common/storage.py:73` `RUN_AT_FORMAT`,
+`src/neki_workflow/flows/stores/common/storage.py:112` `def partition`,
+`src/neki_workflow/flows/stores/common/storage.py:162` `def put_stores`,
+`src/neki_workflow/flows/stores/common/storage.py:231` `def put_raw`,
+`src/neki_workflow/flows/stores/common/storage.py:130` `def _content_type`,
+`src/neki_workflow/flows/stores/common/storage.py:261` `Tagging="kind=raw"`
 
 ### CSV 계약
 
@@ -128,10 +129,10 @@ CSV 에는 타입도 null 도 없습니다. 수집 단계는 값이 없을 때 �
 `\n` 입니다. 기본값인 CRLF 로 두면 Postgres `COPY` 가 마지막 열에 `\r` 을 붙여
 읽습니다.
 
-구현 : `flows/common/storage.py:77` `COLUMNS`,
-`flows/common/storage.py:90` `FLOAT_COLUMNS`,
-`flows/common/storage.py:148` `def _record`,
-`flows/common/storage.py:266` `def _restore`
+구현 : `src/neki_workflow/flows/stores/common/storage.py:77` `COLUMNS`,
+`src/neki_workflow/flows/stores/common/storage.py:90` `FLOAT_COLUMNS`,
+`src/neki_workflow/flows/stores/common/storage.py:148` `def _record`,
+`src/neki_workflow/flows/stores/common/storage.py:266` `def _restore`
 
 ## 산출물 : manifest 테이블
 
@@ -164,13 +165,13 @@ tb_store_collect_manifest
   먼저 잡음. 컬럼을 바꾸면 기존 테이블을 고치지 않으므로 `DROP TABLE` 뒤 다시 돌림
 - 접속은 `DATABASE_URL` 하나. Prefect Block 을 쓰지 않음
 
-구현 : `flows/common/manifest.py:61` `TABLE`,
-`flows/common/manifest.py:88` `_DDL`,
-`flows/common/manifest.py:118` `_INDEXES`,
-`flows/common/manifest.py:74` `_DDL_LOCK_KEY`,
-`flows/common/manifest.py:167` `def ensure_table`,
-`flows/common/manifest.py:182` `def put_manifest`,
-`flows/common/postgres.py:22` `def dsn`
+구현 : `src/neki_workflow/flows/stores/common/manifest.py:61` `TABLE`,
+`src/neki_workflow/flows/stores/common/manifest.py:88` `_DDL`,
+`src/neki_workflow/flows/stores/common/manifest.py:118` `_INDEXES`,
+`src/neki_workflow/flows/stores/common/manifest.py:74` `_DDL_LOCK_KEY`,
+`src/neki_workflow/flows/stores/common/manifest.py:167` `def ensure_table`,
+`src/neki_workflow/flows/stores/common/manifest.py:182` `def put_manifest`,
+`src/neki_workflow/flows/common/postgres.py:22` `def dsn`
 
 ### 본문과 행의 순서
 
@@ -188,8 +189,8 @@ DB 에 닿는지는 본문을 올리기 전에 확인하고, 행은 본문을 �
 - `DATABASE_URL` 이 없으면 수집 flow 는 시작 직후 실패함. `persist=False` 로 끄면 DB
   없이 파싱만 볼 수 있음
 
-구현 : `flows/common/storage.py:162` `def put_stores`,
-`flows/common/postgres.py:39` `def connect`
+구현 : `src/neki_workflow/flows/stores/common/storage.py:162` `def put_stores`,
+`src/neki_workflow/flows/common/postgres.py:39` `def connect`
 
 ## 대상 일자와 실행 시각
 
@@ -208,7 +209,7 @@ DB 에 닿는지는 본문을 올리기 전에 확인하고, 행은 본문을 �
 
 - `target_date` 는 감싼 flow run 의 `target_date` 파라미터가 있으면 그 값, 없으면
   flow run 의 예약 시각(`scheduled_start_time`)을 KST 로 끊은 것. cron 을 역산하지
-  않음. `flows/` 가 스케줄을 알면 안 되기 때문
+  않음. `src/neki_workflow/flows/` 가 스케줄을 알면 안 되기 때문
 - `stores_collect` 가 값을 한 번 정해 브랜드 flow 의 `target_date` 파라미터로
   내려보냄. 브랜드를 스레드로 부르면 Prefect 컨텍스트가 따라가지 않아 브랜드 run
   이 독립 run 으로 뜨고, 그 안에서 읽으면 자기 시작 시각이 나오기 때문
@@ -219,11 +220,11 @@ DB 에 닿는지는 본문을 올리기 전에 확인하고, 행은 본문을 �
   같은 값
 - 백필은 `stores_collect(target_date=...)` 또는 브랜드 flow 의 `target_date` 로 함
 
-구현 : `flows/common/manifest.py:146` `def target_date`,
-`flows/stores_collect/flow.py:138` `cycle = target_date()`,
-`flows/stores_collect/flow.py:144` `target_date=cycle`,
-`flows/photoism_stores/flow.py:28` `target_date: date | None = None`,
-`flows/common/storage.py:117` `def run_at`
+구현 : `src/neki_workflow/flows/stores/common/manifest.py:146` `def target_date`,
+`src/neki_workflow/flows/stores/collect/flow.py:138` `cycle = target_date()`,
+`src/neki_workflow/flows/stores/collect/flow.py:144` `target_date=cycle`,
+`src/neki_workflow/flows/stores/collect/photoism.py:28` `target_date: date | None = None`,
+`src/neki_workflow/flows/stores/common/storage.py:117` `def run_at`
 
 ## 실패한 브랜드는 무엇으로 대신하나
 
@@ -252,10 +253,10 @@ DB 에 닿는지는 본문을 올리기 전에 확인하고, 행은 본문을 �
 넘길 것이 없기 때문입니다. `ok` 가 하나도 없으면(전부 `stale`) 개별 사이트 문제가
 아니라 네트워크나 배포를 의심해야 하므로 에러 로그를 따로 남깁니다.
 
-구현 : `flows/common/manifest.py:66` `MAX_STALE_DAYS`,
-`flows/common/manifest.py:240` `def read_cycle`,
-`flows/stores_collect/flow.py:44` `def _fill_from_previous`,
-`flows/stores_collect/flow.py:171` `raise RuntimeError(`
+구현 : `src/neki_workflow/flows/stores/common/manifest.py:66` `MAX_STALE_DAYS`,
+`src/neki_workflow/flows/stores/common/manifest.py:240` `def read_cycle`,
+`src/neki_workflow/flows/stores/collect/flow.py:44` `def _fill_from_previous`,
+`src/neki_workflow/flows/stores/collect/flow.py:171` `raise RuntimeError(`
 
 ## 병렬 실행과 격리
 
@@ -264,8 +265,8 @@ Prefect 3 에서 동기 서브플로우 호출은 순차라 `ThreadPoolExecutor`
 여기서 다시 던지면 나머지 브랜드의 결과까지 버리게 됩니다. 브랜드 11개는 별도
 파드가 아니라 한 flow run 파드 안의 스레드입니다.
 
-구현 : `flows/stores_collect/flow.py:142` `ThreadPoolExecutor`,
-`flows/stores_collect/flow.py:151` `except Exception as error`
+구현 : `src/neki_workflow/flows/stores/collect/flow.py:142` `ThreadPoolExecutor`,
+`src/neki_workflow/flows/stores/collect/flow.py:151` `except Exception as error`
 
 ## 스케줄
 
@@ -281,8 +282,8 @@ Prefect 3 에서 동기 서브플로우 호출은 순차라 `ThreadPoolExecutor`
 UI 에서 끈 스케줄은 `deploy.py` 가 배포 전에 읽어 두었다가 되돌립니다. 반대로 다시
 켠 것을 배포가 끄지도 않습니다.
 
-구현 : `deployments/stores_collect.py:26` `schedule=Cron(`,
-`deployments/__init__.py:14` `def collect`,
+구현 : `src/neki_workflow/deployments/stores/collect.py:26` `schedule=Cron(`,
+`src/neki_workflow/deployments/__init__.py:14` `def collect`,
 `deploy.py:47` `async def read_states`,
 `deploy.py:69` `async def restore_states`
 
@@ -301,13 +302,13 @@ GitOps 의 k8s Secret `prefect-workflow` 가 flow run Job 파드에 넣습니다
 파드가 아닙니다. 코드에 endpoint 나 프로파일 분기를 두지 않습니다. 로컬과 운영의
 차이가 환경변수 하나여야 코드에 분기가 생기지 않습니다.
 
-구현 : `flows/common/kakao.py:41` `def api_key`,
-`flows/common/storage.py:97` `def _bucket`,
-`flows/common/storage.py:107` `def _client`
+구현 : `src/neki_workflow/flows/stores/common/kakao.py:41` `def api_key`,
+`src/neki_workflow/flows/stores/common/storage.py:97` `def _bucket`,
+`src/neki_workflow/flows/stores/common/storage.py:107` `def _client`
 
 ## 읽는 쪽 계약 (enrich, index)
 
-enrich(`flows/stores_enrich`)가 지키는 계약은 셋입니다.
+enrich(`src/neki_workflow/flows/stores/enrich`)가 지키는 계약은 셋입니다.
 
 - 무엇을 읽을지는 `read_cycle(target_date)` 가 정함. 브랜드마다 `status` 와
   manifest 행을 돌려주고, `failed` 는 건너뜀
@@ -317,9 +318,9 @@ enrich(`flows/stores_enrich`)가 지키는 계약은 셋입니다.
 - S3 파티션을 나열해 최신을 찾지 않음. 파티션이 있어도 행이 없을 수 있어 목록과
   기록이 어긋남
 
-구현 : `flows/common/manifest.py:240` `def read_cycle`,
-`flows/common/storage.py:279` `def read_stores`,
-`flows/common/storage.py:136` `def _split_uri`
+구현 : `src/neki_workflow/flows/stores/common/manifest.py:240` `def read_cycle`,
+`src/neki_workflow/flows/stores/common/storage.py:279` `def read_stores`,
+`src/neki_workflow/flows/stores/common/storage.py:136` `def _split_uri`
 
 ### Athena 를 붙이려면
 
@@ -344,7 +345,7 @@ SELECT * FROM (
 `overlays/prefect/worker.yaml` 의 태그를 커밋합니다. ArgoCD 가 worker 를 롤링하고
 initContainer 가 `deploy.py` 로 deployment 를 재등록하며, 다음 run 부터 새
 이미지가 씁니다. 이미지에 구운 `WORKFLOW_IMAGE` 가 `job_variables.image` 로
-들어가지 않으면 flow run 이 베이스 prefect 이미지로 떠서 `flows` 를 찾지 못합니다.
+들어가지 않으면 flow run 이 베이스 prefect 이미지로 떠서 `neki_workflow.flows` 를 찾지 못합니다.
 
 머지 전에 브랜치를 올려 보려면 Actions build 를 `ref` 에 브랜치명을 적어 실행합니다.
 Prefect 환경이 하나라 그 동안 staging worker 전체가 그 브랜치 코드로 돌고, 04:00
@@ -357,7 +358,7 @@ Prefect 환경이 하나라 그 동안 staging worker 전체가 그 브랜치 �
 
 구현 : `.github/workflows/build.yml:22` `ref:`,
 `.github/workflows/build.yml:39` `GITOPS_PATH:`,
-`Dockerfile:27` `ENV WORKFLOW_IMAGE`,
+`Dockerfile:25` `ENV WORKFLOW_IMAGE`,
 `deploy.py:118` `WORKFLOW_IMAGE`
 
 ## 변경 검증

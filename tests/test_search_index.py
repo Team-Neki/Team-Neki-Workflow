@@ -5,8 +5,8 @@ import re
 
 import pytest
 
-from deployments.search_index import build
-from flows.search_index.job import TIMEOUT_SECONDS, manifest
+from neki_workflow.deployments.search_index import build
+from neki_workflow.flows.search_index.job import TIMEOUT_SECONDS, manifest
 
 
 def test_manifest_name_is_a_valid_k8s_name_and_args_follow_the_contract():

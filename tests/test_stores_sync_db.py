@@ -14,7 +14,7 @@ import psycopg
 import pytest
 from psycopg import sql
 
-from flows.stores_sync.table import synchronize
+from neki_workflow.flows.stores.sync.table import synchronize
 
 CYCLE = date(2026, 9, 27)
 TEST_DSN = os.environ.get("STORES_SYNC_TEST_DATABASE_URL")

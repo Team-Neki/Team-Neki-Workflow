@@ -95,4 +95,4 @@ WHERE ST_DWithin(b.location, s.location, 0.012)            -- 인덱스가 타�
 
 적재는 법정동과 같은 테이블 바꿔치기입니다. 같은 마스터라서가 아니라 매 실행이 전량
 스냅샷이라 같은 답이 나옵니다. 그래서 DDL도 법정동처럼
-`flows/subway_station/table.py`가 소유하고 Server Flyway는 이 테이블을 건드리지 않습니다.
+`src/neki_workflow/flows/subway_station/table.py`가 소유하고 Server Flyway는 이 테이블을 건드리지 않습니다.

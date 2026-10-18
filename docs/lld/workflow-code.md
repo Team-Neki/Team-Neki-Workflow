@@ -2,29 +2,32 @@
 
 ## 구조
 
-워크플로 하나가 디렉토리 하나입니다. `@flow`와 `@task`를 같은 디렉토리에 두되
-파일은 나눕니다. 스케줄만 따로 모읍니다.
+도메인 아래에 워크플로를 둡니다. 지점은 `stores` 아래 collect, enrich, sync 로
+나누고 브랜드별 수집기는 collect 바로 아래 `<브랜드>.py`에 둡니다. 별도 task
+모듈은 `<브랜드>_stores.py`로 구분하며 브랜드별 하위 폴더는 만들지 않습니다.
+배포 설정은 별도로 모읍니다.
 
 ```text
-deployments/              언제 돌리나
-  daily_sync.py           build()
-flows/
-  daily_sync/             무엇을 어떤 순서로 + 실제로 하는 일
-    __init__.py           flow 재노출
-    flow.py               @flow
-    orders.py             @task
-  stores_enrich/          법정동 보강. collect 의 최신 CSV 를 읽어 Kakao 로 b_code 를 붙임
-    name.py               지점 이름 앞머리의 브랜드 표기 통일
-    region.py             판정 (재사용, 폴백, 상태)
-    table.py              tb_photo_booth_enriched 바꿔치기
-  search_index/           서버 색인 잡을 k8s Job 으로 띄우고 기다림
-    job.py                매니페스트와 실행
-  common/                 여러 워크플로가 함께 쓰는 task
-    store.py              수집 공통 스키마 (CollectedStore)
-    storage.py            S3 적재
-    geocode.py            좌표가 빈 지점을 Kakao로 보정
-    imweb_map.py          imweb 지도 위젯 수집 (인생네컷, 포토이즘, 돈룩업)
-    discord.py            flow 결과 알림 (DISCORD_WEBHOOK_URL, SPRING_PROFILES_ACTIVE)
+src/neki_workflow/
+  deployments/
+    stores/               지점 flow 의 build() 설정
+      collect.py           정기 수집 스케줄
+      photoism.py          브랜드 단독 실행 설정
+      enrich.py
+      sync.py
+    search_index.py
+  flows/
+    stores/
+      collect/             지점 수집 총괄
+        flow.py
+        photoism.py        브랜드 수집 flow
+        photosignature.py
+        photosignature_stores.py  브랜드별 수집 task
+      enrich/              법정동 보강
+      sync/                지점 마스터 동기화
+      common/              지점 스키마·S3 적재·manifest·수집 공통 코드
+    search_index/          서버 색인 Job 실행
+    common/                도메인 공통 DB 연결·알림
 aws/config                로컬 개발용 AWS 프로파일
 compose.yaml              로컬 S3 (LocalStack)
 Dockerfile                운영 이미지. worker 와 flow run 이 같이 씀
@@ -35,23 +38,24 @@ spec_check.py             docs/spec 의 anchor 가 코드 줄과 맞는지 확�
 tests/                    순수 판정 테스트. make check 가 돌림. Kakao 와 DB 는 부르지 않음
 ```
 
-의존은 `deployments -> flows` 단방향입니다. `flows/`가 스케줄을 알면 안 됩니다.
+의존은 `neki_workflow.deployments -> neki_workflow.flows` 단방향입니다. `src/neki_workflow/flows/`가 스케줄을 알면 안 됩니다.
 
-워크플로 안에서는 `flow.py`가 task 모듈을 import하고 그 반대는 없습니다. task
-모듈이 `flow.py`를 import해야 할 것 같다면 대개 인자로 받아야 할 값을 import로
+워크플로 안에서는 flow 모듈이 task 모듈을 import하고 그 반대는 없습니다. task
+모듈이 flow 모듈을 import해야 할 것 같다면 대개 인자로 받아야 할 값을 import로
 끌어온 것이므로, 시그니처를 먼저 의심해볼 수 있습니다.
 
-`__init__.py`는 flow 함수만 재노출합니다. 그래야 `deployments/`가
-`from flows.daily_sync import daily_sync`로 짧게 가져올 수 있습니다.
+`__init__.py`는 flow 함수만 재노출합니다. 그래야 `src/neki_workflow/deployments/`가
+`from neki_workflow.flows.example.daily_sync import daily_sync`로 짧게 가져올 수 있습니다.
 ## build() 규약
 
-`deployments/` 아래 모든 모듈은 `RunnerDeployment`를 반환하는 `build()`를 노출해야
-합니다. `deployments/__init__.py`의 `collect()`가 이 이름으로 모듈을 찾습니다.
+`src/neki_workflow/deployments/` 아래 모든 Python 모듈은 `RunnerDeployment`를 반환하는
+`build()`를 노출해야 합니다. `src/neki_workflow/deployments/__init__.py`의 `collect()`가
+하위 패키지까지 탐색합니다. 패키지의 `__init__.py`는 탐색 대상에서 제외합니다.
 
 ```python
 from prefect.deployments.runner import RunnerDeployment
 
-from flows.daily_sync import daily_sync
+from neki_workflow.flows.example.daily_sync import daily_sync
 
 
 def build() -> RunnerDeployment:
@@ -60,7 +64,7 @@ def build() -> RunnerDeployment:
 
 - 함수명은 `build`로 고정. 다른 이름을 쓰면 `AttributeError`로 실패함
 - 워크플로를 추가할 때 `serve.py`와 `deploy.py`는 건드리지 않음
-- `deployments/<name>.py`와 `flows/<name>.py`는 파일명을 1:1로 맞춤
+- deployment는 대응 flow와 같은 도메인에 둠. 브랜드 단독 실행은 `stores/photoism.py`처럼 둠
 
 ### 이름을 바꾸면 고아가 남습니다
 
@@ -82,12 +86,12 @@ prefect deployment delete '<옛-flow-이름>/<deployment-이름>'
 - deployment name : kebab-case (e.g. `"daily-sync"`, `"daily-sync-backfill"`)
 - task 함수 : 동사로 시작 (e.g. `fetch_orders`, `upload_report`)
 
-flow 함수에 `_flow` 접미사를 붙이지 않는 이유는 `flows.daily_sync.daily_sync`처럼
+flow 함수에 `_flow` 접미사를 붙이지 않는 이유는 `neki_workflow.flows.example.daily_sync.daily_sync`처럼
 경로가 이미 역할을 말해주기 때문입니다. import 시 이름이 충돌하면 `as`로 호출부에서
 해결합니다.
 ## 패키지 설정
 
-저장소는 editable로 설치해야 합니다. 설치하지 않으면 `flows` import가 실행
+저장소는 editable로 설치해야 합니다. 설치하지 않으면 `neki_workflow.flows` import가 실행
 위치(CWD)에 의존하게 되어 worker를 다른 경로에서 띄울 때 깨집니다.
 
 ```bash
@@ -107,13 +111,13 @@ make setup
 최상위 패키지를 새로 추가하면 `pyproject.toml`의
 `[tool.hatch.build.targets.wheel] packages`에 반드시 등록해야 합니다. 등록을
 빠뜨려도 **로컬에서는 아무 문제가 없어 알아채기 어렵습니다.** editable 설치는
-프로젝트 루트를 통째로 `sys.path`에 넣기 때문에 `packages` 목록과 무관하게 전부
+`src/`를 `sys.path`에 넣기 때문에 `packages` 목록과 무관하게 전부
 import되기 때문입니다.
 
-반면 wheel을 빌드하면 나열된 패키지만 포함됩니다. 운영 이미지는 wheel 대신
-`Dockerfile`이 `deployments/`, `flows/`, `deploy.py`를 직접 복사하므로, 최상위
-패키지를 추가하면 `packages`와 Dockerfile의 `COPY` 둘 다에 넣어야 합니다. 빠뜨리면
-`make check`는 통과하고 `make image`에서만 `ModuleNotFoundError`가 납니다.
+반면 wheel을 빌드하면 나열된 패키지만 포함됩니다. 현재 패키지 정본은
+`neki_workflow` 하나입니다. 운영 이미지는 wheel 대신 `Dockerfile`이 패키지
+전체와 `deploy.py`를 직접 복사합니다. 새 파일을 추가하면 `make check`와
+`make image`에서 import와 deployment 수집을 확인합니다.
 
 ```bash
 uv build --wheel --out-dir /tmp/dist

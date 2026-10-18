@@ -31,9 +31,9 @@
 - `(platform, idx)` 중복은 첫 것만 남기고 경고. 결과 테이블의 PK 임
 - `collected_at` 은 CSV 의 시간대 붙은 ISO 문자열을 KST 벽시계로 바꾸고 시간대를 뗌
 
-구현 : `deployments/stores_enrich.py:25` `schedule=Cron(`,
-`flows/stores_enrich/flow.py:56` `def _read_inputs`,
-`flows/stores_enrich/region.py:91` `def from_collect`
+구현 : `src/neki_workflow/deployments/stores/enrich.py:25` `schedule=Cron(`,
+`src/neki_workflow/flows/stores/enrich/flow.py:56` `def _read_inputs`,
+`src/neki_workflow/flows/stores/enrich/region.py:91` `def from_collect`
 
 ## 판정
 
@@ -57,11 +57,11 @@
 - `KAKAO_API_KEY` 가 없으면 재사용만 하고 나머지는 비움. flow 는 완주함
 - task 는 하나. 지점마다 task 를 만들지 않음. 쓰레드 안에서 로그를 남기지 않음
 
-구현 : `flows/common/kakao.py:111` `def coord2regioncode`,
-`flows/stores_enrich/region.py:157` `def reusable`,
-`flows/stores_enrich/region.py:190` `def resolve`,
-`flows/stores_enrich/region.py:309` `def enrich_stores`,
-`flows/stores_enrich/region.py:45` `WORKERS`
+구현 : `src/neki_workflow/flows/stores/common/kakao.py:111` `def coord2regioncode`,
+`src/neki_workflow/flows/stores/enrich/region.py:157` `def reusable`,
+`src/neki_workflow/flows/stores/enrich/region.py:190` `def resolve`,
+`src/neki_workflow/flows/stores/enrich/region.py:309` `def enrich_stores`,
+`src/neki_workflow/flows/stores/enrich/region.py:45` `WORKERS`
 
 ## 주소는 해석하지 않는다
 
@@ -81,8 +81,8 @@
 코드는 맞으므로 경고만 보고 넘어가면 됩니다. `reused` 행은 처음 판정될 때 이미
 경고했으므로 매일 되풀이하지 않습니다.
 
-구현 : `flows/stores_enrich/region.py:279` `def mismatched`,
-`flows/stores_enrich/table.py:45` `LEGAL_DONG_TABLE`
+구현 : `src/neki_workflow/flows/stores/enrich/region.py:279` `def mismatched`,
+`src/neki_workflow/flows/stores/enrich/table.py:45` `LEGAL_DONG_TABLE`
 
 ## 이름은 앞머리 브랜드 표기만 통일한다
 
@@ -96,8 +96,8 @@
 - 원문은 collect CSV(S3)에 남음. collect 는 여전히 해석하지 않음
 - 브랜드와 지점명을 나누는 검색용 정규화는 여전히 서버 `SearchNormalizer` 몫
 
-구현 : `flows/stores_enrich/name.py:16` `PREFIX_ALIASES`,
-`flows/stores_enrich/region.py:108` `unify_brand(`
+구현 : `src/neki_workflow/flows/stores/enrich/name.py:16` `PREFIX_ALIASES`,
+`src/neki_workflow/flows/stores/enrich/region.py:108` `unify_brand(`
 
 ## 관리자 등록 지점도 함께 담는다
 
@@ -117,10 +117,10 @@
 - 하한(800)은 수집 지점만 셈. 관리자 등록 지점이 수집 장애를 가리지 않게 함
 - 테이블이 없으면(서버 마이그레이션 전) 경고 후 수집 지점만으로 진행함
 
-구현 : `flows/stores_enrich/table.py:191` `def read_manual`,
-`flows/stores_enrich/region.py:126` `def from_manual`,
-`flows/stores_enrich/region.py:41` `MANUAL_IDX_PREFIX`,
-`flows/stores_enrich/flow.py:99` `def _read_manual`
+구현 : `src/neki_workflow/flows/stores/enrich/table.py:191` `def read_manual`,
+`src/neki_workflow/flows/stores/enrich/region.py:126` `def from_manual`,
+`src/neki_workflow/flows/stores/enrich/region.py:41` `MANUAL_IDX_PREFIX`,
+`src/neki_workflow/flows/stores/enrich/flow.py:99` `def _read_manual`
 
 ## enrich 결과는 Postgres 에만 저장한다
 
@@ -129,7 +129,7 @@ collect 원본 CSV 는 계속 S3 에서 읽지만 enrich 결과는 S3 에 쓰지
 없습니다. 기존 S3 enrich 객체는 삭제하지 않습니다. COPY 열 순서는
 `EnrichedStore` 필드 순서가 정본입니다.
 
-구현 : `flows/stores_enrich/region.py:85` `COLUMNS = tuple(`
+구현 : `src/neki_workflow/flows/stores/enrich/region.py:85` `COLUMNS = tuple(`
 
 ## 산출물 : Postgres `tb_photo_booth_enriched`
 
@@ -158,11 +158,11 @@ index 가 읽는 현재 세대입니다. 세대 교체는 `tb_legal_dong` 과 �
 - BACKEND-114 의 `tb_temp_photo_booth` 와 별도 테이블. enrich 는 S3 를 읽으므로
   그쪽을 기다리지 않음
 
-구현 : `flows/stores_enrich/table.py:38` `TABLE`,
-`flows/stores_enrich/table.py:225` `def swap_table`,
-`flows/stores_enrich/table.py:162` `def read_current`,
-`flows/stores_enrich/table.py:94` `def _row`,
-`flows/stores_enrich/flow.py:48` `MIN_EXPECTED`
+구현 : `src/neki_workflow/flows/stores/enrich/table.py:38` `TABLE`,
+`src/neki_workflow/flows/stores/enrich/table.py:225` `def swap_table`,
+`src/neki_workflow/flows/stores/enrich/table.py:162` `def read_current`,
+`src/neki_workflow/flows/stores/enrich/table.py:94` `def _row`,
+`src/neki_workflow/flows/stores/enrich/flow.py:48` `MIN_EXPECTED`
 
 ## 색인은 별도 flow 가 띄운다
 
@@ -185,9 +185,9 @@ enrich 가 끝나도 색인 Job 을 띄우지 않습니다. 묶으면 enrich 재
 - `failed` 로 빠진 브랜드와 `stale` 로 대신한 브랜드, `tb_legal_dong` 에 없는 코드를 경고로 붙임
 - **알림 실패로 flow 를 실패시키지 않음.** 알림은 적재 커밋 뒤에 불리고, 발송·본문 조립의 어떤 예외도 경고로만 남김. 새면 이미 끝난 적재가 실패로 기록되고 재시도가 적재를 되풀이함
 
-구현 : `flows/common/discord.py:53` `def notify`,
-`flows/common/discord.py:96` `def notify_failure`,
-`flows/stores_enrich/flow.py:120` `def _report`
+구현 : `src/neki_workflow/flows/common/discord.py:53` `def notify`,
+`src/neki_workflow/flows/common/discord.py:96` `def notify_failure`,
+`src/neki_workflow/flows/stores/enrich/flow.py:120` `def _report`
 
 ## 외부 의존과 장애
 

@@ -41,7 +41,7 @@ setup: ## 의존성을 uv.lock 기준으로 설치한다
 
 check: spec-check ## 임포트와 deployment 수집, spec anchor, 단위 테스트를 확인한다
 	@$(UV) run python -c "\
-	from deployments import collect; \
+	from neki_workflow.deployments import collect; \
 	found = list(collect()); \
 	print('deployment', len(found), '건'); \
 	[print('  ', d.flow_name + '/' + d.name) for d in found]"
@@ -52,92 +52,92 @@ spec-check: ## docs/spec 의 구현 anchor 가 코드 줄과 맞는지 확인한
 	@$(UV) run python spec_check.py
 
 hello: ## hello 워크플로를 실행한다
-	$(UV) run python -c "from flows.hello import hello; hello()"
+	$(UV) run python -c "from neki_workflow.flows.hello import hello; hello()"
 
 lifefourcuts: ## 인생네컷 지점을 수집한다 (S3, DATABASE_URL 필요)
 	@$(UV) run python -c "\
-	from flows.lifefourcuts_stores import lifefourcuts_stores; \
+	from neki_workflow.flows.stores.collect.lifefourcuts import lifefourcuts_stores; \
 	stores = lifefourcuts_stores(); \
 	print('수집', len(stores), '건')"
 
 photoism: ## 포토이즘 지점을 수집한다 (S3, DATABASE_URL 필요)
 	@$(UV) run python -c "\
-	from flows.photoism_stores import photoism_stores; \
+	from neki_workflow.flows.stores.collect.photoism import photoism_stores; \
 	stores = photoism_stores(); \
 	print('수집', len(stores), '건')"
 
 dontlxxkup: ## 돈룩업 지점을 수집한다 (S3, DATABASE_URL 필요)
 	@$(UV) run python -c "\
-	from flows.dontlxxkup_stores import dontlxxkup_stores; \
+	from neki_workflow.flows.stores.collect.dontlxxkup import dontlxxkup_stores; \
 	stores = dontlxxkup_stores(); \
 	print('수집', len(stores), '건')"
 
 photosignature: ## 포토시그니처 지점을 수집한다 (S3, DATABASE_URL 필요)
 	@$(UV) run python -c "\
-	from flows.photosignature_stores import photosignature_stores; \
+	from neki_workflow.flows.stores.collect.photosignature import photosignature_stores; \
 	stores = photosignature_stores(); \
 	print('수집', len(stores), '건')"
 
 photogray: ## 포토그레이 지점을 수집한다 (KAKAO_API_KEY, S3, DATABASE_URL 필요)
 	@$(UV) run python -c "\
-	from flows.photogray_stores import photogray_stores; \
+	from neki_workflow.flows.stores.collect.photogray import photogray_stores; \
 	stores = photogray_stores(); \
 	print('수집', len(stores), '건')"
 
 planbstudio: ## 플랜비스튜디오 지점을 수집한다 (S3, DATABASE_URL 필요)
 	@$(UV) run python -c "\
-	from flows.planbstudio_stores import planbstudio_stores; \
+	from neki_workflow.flows.stores.collect.planbstudio import planbstudio_stores; \
 	stores = planbstudio_stores(); \
 	print('수집', len(stores), '건')"
 
 picdot: ## 픽닷 지점을 수집한다 (KAKAO_API_KEY, S3, DATABASE_URL 필요)
 	@$(UV) run python -c "\
-	from flows.picdot_stores import picdot_stores; \
+	from neki_workflow.flows.stores.collect.picdot import picdot_stores; \
 	stores = picdot_stores(); \
 	print('수집', len(stores), '건')"
 
 monomansion: ## 모노맨션 지점을 수집한다 (KAKAO_API_KEY, S3, DATABASE_URL 필요)
 	@$(UV) run python -c "\
-	from flows.monomansion_stores import monomansion_stores; \
+	from neki_workflow.flows.stores.collect.monomansion import monomansion_stores; \
 	stores = monomansion_stores(); \
 	print('수집', len(stores), '건')"
 
 harufilm: ## 하루필름 지점을 수집한다 (KAKAO_API_KEY, S3, DATABASE_URL 필요)
 	@$(UV) run python -c "\
-	from flows.harufilm_stores import harufilm_stores; \
+	from neki_workflow.flows.stores.collect.harufilm import harufilm_stores; \
 	stores = harufilm_stores(); \
 	print('수집', len(stores), '건')"
 
 photolabplus: ## 포토랩플러스 지점을 수집한다 (KAKAO_API_KEY, S3, DATABASE_URL 필요)
 	@$(UV) run python -c "\
-	from flows.photolabplus_stores import photolabplus_stores; \
+	from neki_workflow.flows.stores.collect.photolabplus import photolabplus_stores; \
 	stores = photolabplus_stores(); \
 	print('수집', len(stores), '건')"
 
 broomstudio: ## 비룸스튜디오 지점을 수집한다 (KAKAO_API_KEY, S3, DATABASE_URL 필요)
 	@$(UV) run python -c "\
-	from flows.broomstudio_stores import broomstudio_stores; \
+	from neki_workflow.flows.stores.collect.broomstudio import broomstudio_stores; \
 	stores = broomstudio_stores(); \
 	print('수집', len(stores), '건')"
 
 collect: ## 전체 브랜드를 병렬로 수집한다 (KAKAO_API_KEY, S3, DATABASE_URL 필요)
 	@$(UV) run python -c "\
-	from flows.stores_collect import stores_collect; \
+	from neki_workflow.flows.stores.collect import stores_collect; \
 	results = stores_collect(); \
 	print('성공', sum(1 for r in results.values() if r['status'] == 'ok'), '건'); \
 	print('합계', sum(r.get('count', 0) for r in results.values()), '건')"
 
 enrich: ## 최신 collect 적재물에 법정동 코드를 붙여 Postgres 에만 적재한다 (KAKAO_API_KEY, S3 읽기, DATABASE_URL 필요)
 	@$(UV) run python -c "\
-	from flows.stores_enrich import stores_enrich; \
+	from neki_workflow.flows.stores.enrich import stores_enrich; \
 	result = stores_enrich(); \
 	print('보강', result['count'], '건', result['status'])"
 
 stores-sync: ## 보강 지점을 안정적인 locationId로 동기화한다 (서버 V34, DATABASE_URL 필요)
-	@$(UV) run python -c "from flows.stores_sync import stores_sync; print(stores_sync())"
+	@$(UV) run python -c "from neki_workflow.flows.stores.sync import stores_sync; print(stores_sync())"
 
 stores-sync-dry-run: ## 지점 동기화 예상 건수를 확인한다 (DB 쓰기 없음)
-	@$(UV) run python -c "from flows.stores_sync import stores_sync; print(stores_sync(persist=False))"
+	@$(UV) run python -c "from neki_workflow.flows.stores.sync import stores_sync; print(stores_sync(persist=False))"
 
 test-stores-sync-db: ## 전용 PostGIS DB에서 지점 동기화와 enrich 적재 통합 테스트를 실행한다
 	@test -n "$$STORES_SYNC_TEST_DATABASE_URL" || (echo 'STORES_SYNC_TEST_DATABASE_URL이 필요합니다'; exit 1)
@@ -145,19 +145,19 @@ test-stores-sync-db: ## 전용 PostGIS DB에서 지점 동기화와 enrich 적�
 
 search-index: ## 서버 검색 색인 잡을 k8s Job 으로 띄운다 (NEKI_BATCH_IMAGE 없으면 경고 후 끝남)
 	@$(UV) run python -c "\
-	from flows.search_index import search_index; \
+	from neki_workflow.flows.search_index import search_index; \
 	result = search_index(); \
 	print('색인 실행' if result['launched'] else '색인 건너뜀', result['cycle'])"
 
 subway-station: ## 지하철 역 정보를 수집해 Postgres 에 적재한다 (DATABASE_URL 필요)
 	@$(UV) run python -c "\
-	from flows.subway_station import subway_station; \
+	from neki_workflow.flows.subway_station import subway_station; \
 	stations = subway_station(); \
 	print('수집', len(stations), '건')"
 
 legal-dong: ## 법정동 코드를 수집해 Postgres 에 적재한다 (DATABASE_URL 필요)
 	@$(UV) run python -c "\
-	from flows.legal_dong import legal_dong; \
+	from neki_workflow.flows.legal_dong import legal_dong; \
 	dongs = legal_dong(); \
 	print('수집', len(dongs), '건')"
 
@@ -205,7 +205,7 @@ image: ## 컨테이너 이미지를 빌드하고 안에서 deployment 수집을 
 	docker build --build-arg IMAGE_REF=$(IMAGE) -t $(IMAGE) .
 	docker run --rm --user 1001 --read-only -e HOME=/tmp --tmpfs /tmp $(IMAGE) python -c "\
 	import os, prefect, prefect_kubernetes; \
-	from deployments import collect; \
+	from neki_workflow.deployments import collect; \
 	assert prefect.__version__ == '3.8.5', prefect.__version__; \
 	print('prefect', prefect.__version__); \
 	print('deployment', len(list(collect())), '건'); \
