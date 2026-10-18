@@ -5,16 +5,13 @@
 UI나 cron이 워크플로를 직접 실행하지 않습니다. flow run 레코드를 만들어둘 뿐이고,
 `serve.py`나 worker가 API를 주기적으로 들여다보다 집어갑니다. pull 모델입니다.
 
-```text
-[UI / cron / API]
-      |  1. flow run 레코드 생성 (SCHEDULED)
-      v
-[Prefect API]  <-----+
-                     |  2. 10초마다 폴링
-              [serve.py / worker]
-                     |  3. entrypoint import 후 실행
-                     v
-                 [flow] -> [task]
+```mermaid
+flowchart LR
+    trigger["UI · cron · API"] -->|"flow run 생성 (SCHEDULED)"| api["Prefect API"]
+    runner["serve.py / worker"] -->|"10초마다 폴링"| api
+    api -->|"실행 대상 전달"| runner
+    runner -->|"entrypoint import 후 실행"| flow["flow"]
+    flow --> task["task"]
 ```
 
 여기서 따라오는 성질들이 있습니다.
@@ -34,13 +31,16 @@ Actions는 Prefect 서버에 접근하지 않습니다. 서버가 외부에 노�
 때문입니다. 이미지를 밀고 GitOps 태그를 바꾸는 것까지만 하고, deployment 등록은
 클러스터 안에서 일어납니다.
 
-```text
-main merge
-  -> build.yml      이미지 빌드, ghcr.io/team-neki/team-neki-workflow:<version>-<sha7> 와 :main 푸시
-  -> build.yml      Team-Neki-GitOps overlays/prefect/worker.yaml 의 image 태그 커밋
-  -> ArgoCD         worker Deployment 롤링
-  -> initContainer  /opt/prefect 에서 python deploy.py (등록 갱신, pause 보존)
-  -> 다음 flow run 부터 새 이미지
+```mermaid
+flowchart LR
+    merge["main merge"] --> build["build.yml · 이미지 빌드"]
+    build --> registry["GHCR · version-sha7 / main 태그 푸시"]
+    build --> gitops["GitOps · overlays/prefect/worker.yaml 태그 커밋"]
+    gitops --> argo["ArgoCD · worker Deployment 롤링"]
+    registry --> worker["새 이미지의 worker 파드"]
+    argo --> worker
+    worker --> init["initContainer · deploy.py 등록 갱신·pause 보존"]
+    init --> runs["다음 flow run부터 새 이미지"]
 ```
 
 worker와 flow run(Job 파드)이 같은 이미지입니다. 이미지에 `WORKFLOW_IMAGE`로 자기
