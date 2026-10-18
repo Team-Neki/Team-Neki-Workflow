@@ -378,7 +378,9 @@ worker와 flow run(Job 파드)이 같은 이미지를 씁니다. 이미지에 `W
 넣습니다. 태그의 version은 `pyproject.toml`에서 읽습니다.
 
 Prefect API 와 실행 기록은 공유합니다. 기존 `prefect` 네임스페이스의 worker 는 prod,
-새 `prefect-stg` 네임스페이스의 worker 는 stg 입니다. work pool 은 각각 `neki-pool` 과
+새 `prefect-stg` 네임스페이스의 worker 는 stg 입니다. 최초 GitOps 설정은
+`replicas: 0`이므로 이미지·Secret 준비 후 GitOps에서 1로 변경해야 합니다.
+자세한 순서는 `docs/runbook.md`의 staging 최초 활성화 절을 따릅니다. work pool 은 각각 `neki-pool` 과
 `neki-stg-pool` 이며, stg deployment 이름에는 `-stg` 가 붙습니다. 새 stg deployment 는
 처음에 pause 상태로 등록되므로 수동 확인 후 필요한 스케줄을 켭니다. 자격증명
 (`KAKAO_API_KEY`, `DATABASE_URL`, `S3_BUCKET` 등)은 각 네임스페이스의 k8s Secret

@@ -131,12 +131,32 @@ staging API 의 `JASYPT_PASSWORD` 를 넣습니다. prod Secret 은 운영 앱 D
 `neki-images` ConfigMap 이 Batch 이미지를 전달하고, Batch Job 의 네임스페이스는
 flow run 파드의 service account namespace 에서 읽습니다.
 
+### staging 최초 활성화와 두 PR 선행 머지
+
+GitOps #37 → Workflow #34 순서로 먼저 병합할 수 있습니다. Workflow main push의
+build가 GitOps staging 이미지 두 참조를 갱신하지만, GitOps의 초기 `replicas: 0`은
+유지하므로 이 단계에서는 worker와 deployment가 생성되지 않습니다.
+
+1. GitOps #37 병합 후 Workflow #34를 병합하고 자동 build 성공과 staging 이미지
+   갱신을 확인합니다.
+2. 최신 GitOps main에서 `overlays/prefect-stg/namespace.yaml`을 먼저 적용한 뒤
+   staging `prefect-workflow` Secret을 적용합니다.
+3. GitOps staging worker의 `replicas: 1` 변경을 main에 반영하고
+   `argocd/apps/prefect-stg.yaml`을 적용합니다. 기존 Application은 자동 동기화합니다.
+4. worker가 뜬 뒤 `hello/hello-local-stg`로 확인합니다. 필요한 스케줄만 켭니다.
+
+Server #351은 Batch 이미지 배포 액션의 환경 선택 변경이므로 위 두 PR의 선행
+머지에는 필요하지 않습니다. 검색 색인을 실행하기 전에는 staging `images.env`의
+Batch 이미지와 Secret의 profile/DB 대상을 확인합니다. #351을 나중에 반영한 뒤
+`environment=stg`로 Batch를 수동 배포할 수 있습니다. 그 전의 기존 Batch 배포
+액션은 `overlays/prefect/images.env`를 갱신하므로 staging용으로 실행하지 않습니다.
+
 ## merge할 때 확인하는 것
 
 1. PR에서 `ci` 워크플로가 통과했는지 봅니다. `make check`와 `make image`를 돌립니다
 2. merge 뒤 Actions 탭에서 `build` 워크플로가 끝나기를 기다립니다. "Resolve image tag" 단계 출력의 태그를 적어둡니다
 3. Team-Neki-GitOps main에 해당 환경의 `worker.yaml` 이미지 갱신 커밋이 생겼는지 봅니다
-4. ArgoCD가 동기화하면 worker가 롤링됩니다. initContainer 로그에 `이미지:` 줄과 deployment마다 `등록:` 줄이 보이면 등록이 끝난 것입니다. 기존 pause 와 스케줄 active 상태는 등록할 때 함께 반영됩니다
+4. 최초 설치에서는 위 활성화 절차를 먼저 마칩니다. 활성화된 worker는 ArgoCD가 동기화하면 롤링됩니다. initContainer 로그에 `이미지:` 줄과 deployment마다 `등록:` 줄이 보이면 등록이 끝난 것입니다. 기존 pause 와 스케줄 active 상태는 등록할 때 함께 반영됩니다
 5. Prefect UI에서 deployment 하나를 열어 job variables의 `image`가 새 태그인지 봅니다. stg 는 `hello/hello-local-stg`, prod 는 `hello/hello-local`을 한 번 실행해 Job 파드가 뜨고 완료되면 끝입니다
 
 검증·재시작·롤백 전에 대상을 선택합니다. main merge 의 대상은 stg 입니다.

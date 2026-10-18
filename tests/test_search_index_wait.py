@@ -71,8 +71,12 @@ def test_failed_job_error_is_preserved():
         asyncio.run(job._wait_for_completion(run))
 
 
-def test_task_timeout_fails_without_deleting_job(monkeypatch):
+def test_task_timeout_fails_without_deleting_job(tmp_path, monkeypatch):
     """대기 시간 초과가 동기 task까지 전파되고 Job은 조사용으로 남는다."""
+    namespace_file = tmp_path / "namespace"
+    namespace_file.write_text("prefect-stg\n")
+    monkeypatch.setattr(job, "NAMESPACE_FILE", namespace_file)
+    monkeypatch.setenv("KUBERNETES_SERVICE_HOST", "kubernetes.default.svc")
 
     async def never_complete(**kwargs):
         await asyncio.sleep(10)
@@ -90,3 +94,5 @@ def test_task_timeout_fails_without_deleting_job(monkeypatch):
     with pytest.raises(TimeoutError):
         job.run_search_index.fn(date(2026, 9, 27), run_at="2026-09-27_053000")
     assert factory.call_args.kwargs["delete_after_completion"] is False
+    assert factory.call_args.kwargs["namespace"] == "prefect-stg"
+    assert factory.call_args.kwargs["v1_job"]["metadata"]["namespace"] == "prefect-stg"
