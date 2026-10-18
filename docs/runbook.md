@@ -178,7 +178,7 @@ main 에 아직 없다면 2) 로 갑니다.
 
 일어나는 일은 main merge 와 같습니다. 이미지가 `<그 브랜치 pyproject version>-<sha7>` 로
 올라가고, GitOps `worker.yaml` 의 태그가 바뀌어 worker 가 롤링되고, initContainer 가
-그 브랜치의 `neki_workflow/deployments/` 를 등록합니다. 다른 점은 둘입니다.
+그 브랜치의 `src/neki_workflow/deployments/` 를 등록합니다. 다른 점은 둘입니다.
 
 - `:main` 태그는 옮기지 않습니다. `:main` 은 main 이 가리키는 이미지라는 뜻을 유지합니다
 - GitOps 커밋 메시지에 `(from <브랜치>, 머지 전 테스트 배포)` 가 붙어 이력에서 구분됩니다

@@ -36,7 +36,7 @@
         target_date   2026-09-23
 
 지금 도는 flow run 의 예약 시각(`scheduled_start_time`) 을 KST 로 끊어 정한다.
-cron 을 역산하지 않는 이유는 `neki_workflow/flows/` 가 스케줄을 알면 안 되기 때문이다. 예약
+cron 을 역산하지 않는 이유는 `src/neki_workflow/flows/` 가 스케줄을 알면 안 되기 때문이다. 예약
 시각은 Prefect 가 run 레코드에 이미 박아둔 값이라 스케줄을 몰라도 읽을 수 있다.
 
 **묶어 도는 쪽은 이 값을 인자로 내려보내야 한다.** `stores_collect` 는 브랜드

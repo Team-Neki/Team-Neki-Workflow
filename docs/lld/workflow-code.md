@@ -7,7 +7,7 @@
 워크플로 디렉토리에 두되 파일을 나눕니다. 배포 설정은 별도로 모읍니다.
 
 ```text
-neki_workflow/
+src/neki_workflow/
   deployments/
     stores/               지점 flow 의 build() 설정
       collect.py           정기 수집 스케줄
@@ -36,18 +36,18 @@ spec_check.py             docs/spec 의 anchor 가 코드 줄과 맞는지 확�
 tests/                    순수 판정 테스트. make check 가 돌림. Kakao 와 DB 는 부르지 않음
 ```
 
-의존은 `neki_workflow.deployments -> neki_workflow.flows` 단방향입니다. `neki_workflow/flows/`가 스케줄을 알면 안 됩니다.
+의존은 `neki_workflow.deployments -> neki_workflow.flows` 단방향입니다. `src/neki_workflow/flows/`가 스케줄을 알면 안 됩니다.
 
 워크플로 안에서는 `flow.py`가 task 모듈을 import하고 그 반대는 없습니다. task
 모듈이 `flow.py`를 import해야 할 것 같다면 대개 인자로 받아야 할 값을 import로
 끌어온 것이므로, 시그니처를 먼저 의심해볼 수 있습니다.
 
-`__init__.py`는 flow 함수만 재노출합니다. 그래야 `neki_workflow/deployments/`가
+`__init__.py`는 flow 함수만 재노출합니다. 그래야 `src/neki_workflow/deployments/`가
 `from neki_workflow.flows.example.daily_sync import daily_sync`로 짧게 가져올 수 있습니다.
 ## build() 규약
 
-`neki_workflow/deployments/` 아래 모든 Python 모듈은 `RunnerDeployment`를 반환하는
-`build()`를 노출해야 합니다. `neki_workflow/deployments/__init__.py`의 `collect()`가
+`src/neki_workflow/deployments/` 아래 모든 Python 모듈은 `RunnerDeployment`를 반환하는
+`build()`를 노출해야 합니다. `src/neki_workflow/deployments/__init__.py`의 `collect()`가
 하위 패키지까지 탐색합니다. 패키지의 `__init__.py`는 탐색 대상에서 제외합니다.
 
 ```python
@@ -109,7 +109,7 @@ make setup
 최상위 패키지를 새로 추가하면 `pyproject.toml`의
 `[tool.hatch.build.targets.wheel] packages`에 반드시 등록해야 합니다. 등록을
 빠뜨려도 **로컬에서는 아무 문제가 없어 알아채기 어렵습니다.** editable 설치는
-프로젝트 루트를 통째로 `sys.path`에 넣기 때문에 `packages` 목록과 무관하게 전부
+`src/`를 `sys.path`에 넣기 때문에 `packages` 목록과 무관하게 전부
 import되기 때문입니다.
 
 반면 wheel을 빌드하면 나열된 패키지만 포함됩니다. 현재 패키지 정본은

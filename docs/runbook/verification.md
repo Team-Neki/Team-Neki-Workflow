@@ -86,7 +86,7 @@ DDL을 바꿨다면 `CREATE TABLE IF NOT EXISTS`가 기존 테이블을 고치�
 `DROP TABLE tb_legal_dong` 후 다시 돌려야 합니다.
 
 `picdot`, `monomansion`, `photogray`, `harufilm`, `photolabplus`, `broomstudio`는
-`KAKAO_API_KEY`가 있어야 돕니다. 키가 없으면 `neki_workflow/flows/stores/common/kakao.py`의 `api_key()`가
+`KAKAO_API_KEY`가 있어야 돕니다. 키가 없으면 `src/neki_workflow/flows/stores/common/kakao.py`의 `api_key()`가
 `RuntimeError`로 막습니다.
 
 `planbstudio`, `photosignature`, `lifefourcuts`, `photoism`, `dontlxxkup`은 키가
@@ -116,7 +116,7 @@ psql "$DATABASE_URL" -c "select platform, count(*) from tb_store_collect_manifes
 브랜드마다 행이 2건이어야 합니다. 1건이면 덮어쓰고 있는 것이고, 인덱스 이름에
 번호가 붙으면 `IF NOT EXISTS`가 빠진 것입니다.
 
-`neki_workflow/flows/stores/common/`의 수집 모듈을 고쳤다면 그것을 쓰는 브랜드를 모두 돌려 건수가
+`src/neki_workflow/flows/stores/common/`의 수집 모듈을 고쳤다면 그것을 쓰는 브랜드를 모두 돌려 건수가
 전과 같은지 봐야 합니다. `imweb_map.py`는 인생네컷과 포토이즘, 돈룩업이 함께 씁니다.
 
 파싱만 확인하고 싶으면 적재를 끕니다.
@@ -139,7 +139,7 @@ uid와 읽기 전용 루트로 돌리므로 파일 권한 문제도 여기서 �
 make image
 ```
 
-`deploy.py`나 `neki_workflow/deployments/`를 건드렸다면 로컬 서버를 띄워 배포 사이클을 확인해야
+`deploy.py`나 `src/neki_workflow/deployments/`를 건드렸다면 로컬 서버를 띄워 배포 사이클을 확인해야
 합니다. 실제 스케줄을 다루는 코드라 import 성공만으로는 회귀를 잡을 수 없습니다.
 
 ```bash

@@ -25,10 +25,10 @@
 - 지점 동기화 deployment는 스케줄 없이 등록합니다. 서버 마이그레이션, 기존 카카오
   수집 중지, 지도 조회 범위 전환과 검색 색인의 지점 참조 전환이 준비된 뒤 스케줄을 정합니다.
 
-구현 : `neki_workflow/flows/stores/sync/flow.py:13` `def stores_sync`,
-`neki_workflow/flows/stores/sync/table.py:52` `%(source_type)s`,
-`neki_workflow/flows/stores/sync/records.py:32` `def prepare`,
-`neki_workflow/deployments/stores/sync.py:9` `to_deployment(name="stores-sync"`
+구현 : `src/neki_workflow/flows/stores/sync/flow.py:13` `def stores_sync`,
+`src/neki_workflow/flows/stores/sync/table.py:52` `%(source_type)s`,
+`src/neki_workflow/flows/stores/sync/records.py:32` `def prepare`,
+`src/neki_workflow/deployments/stores/sync.py:9` `to_deployment(name="stores-sync"`
 
 ## 안정적인 ID와 수동 관리
 
@@ -63,9 +63,9 @@
 - 수집에서 빠진 지점도 삭제하거나 비활성화하지 않습니다. 현재 enrich는 실패한
   브랜드를 제외하므로 부재만으로 폐점을 확정할 수 없습니다. 폐점은 관리자 판단입니다.
 
-구현 : `neki_workflow/flows/stores/sync/table.py:44` `UPSERT`,
-`neki_workflow/flows/stores/sync/table.py:80` `def require_schema`,
-`neki_workflow/flows/stores/sync/table.py:111` `def require_enriched`
+구현 : `src/neki_workflow/flows/stores/sync/table.py:44` `UPSERT`,
+`src/neki_workflow/flows/stores/sync/table.py:80` `def require_schema`,
+`src/neki_workflow/flows/stores/sync/table.py:111` `def require_enriched`
 
 ## 트랜잭션과 재실행
 
@@ -78,8 +78,8 @@
 - `persist=False`는 입력·브랜드·스키마를 읽고 예상 건수만 반환합니다.
   지점 INSERT/UPDATE, S3 업로드, 검색 색인 실행은 하지 않습니다.
 
-구현 : `neki_workflow/flows/stores/sync/table.py:130` `def synchronize`,
-`neki_workflow/flows/stores/sync/table.py:223` `def sync_locations`
+구현 : `src/neki_workflow/flows/stores/sync/table.py:130` `def synchronize`,
+`src/neki_workflow/flows/stores/sync/table.py:223` `def sync_locations`
 
 ## 조회와 색인 연결의 후속 계약
 

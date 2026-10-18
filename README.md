@@ -6,9 +6,11 @@
 
 도메인별로 워크플로와 배포 설정을 묶습니다. 지점은 `stores` 아래에서
 collect, enrich, sync 로 나눕니다. 브랜드별 지점 수집기는 collect 아래에 둡니다.
+로컬은 `uv sync`의 editable 설치로, 운영 이미지는 `PYTHONPATH=/opt/prefect/src`로
+`neki_workflow` 패키지를 찾습니다.
 
 ```text
-neki_workflow/
+src/neki_workflow/
   deployments/
     stores/               지점 배포 설정: collect, 브랜드별 단독 실행, enrich, sync
     search_index.py       검색 색인 배포 설정
@@ -37,10 +39,10 @@ tests/                    순수 판정 테스트. make check 가 돌림
 의존 방향은 단방향입니다.
 
 ```text
-neki_workflow/deployments/  ->  neki_workflow/flows/<도메인>/<작업>/flow.py  ->  task 모듈
+src/neki_workflow/deployments/  ->  src/neki_workflow/flows/<도메인>/<작업>/flow.py  ->  task 모듈
 ```
 
-`neki_workflow/flows/`는 스케줄을 모르고, 워크플로 안에서 task 모듈은 `flow.py`를 import하지
+`src/neki_workflow/flows/`는 스케줄을 모르고, 워크플로 안에서 task 모듈은 `flow.py`를 import하지
 않습니다. 이 방향이 깨지면 분리의 의미가 없어집니다.
 
 ## 실행 모델
@@ -122,12 +124,12 @@ deployment는 대응 flow와 같은 도메인에 둡니다. `deployments/stores/
 
 `serve.py`와 `deploy.py`는 건드리지 않습니다. flow와 deployment를 추가합니다.
 
-먼저 `neki_workflow/flows/<도메인>/<작업>/`을 만들고 task를 역할별 모듈에 담습니다.
-지점 flow가 함께 쓰는 코드는 `neki_workflow/flows/stores/common/`에 둡니다.
-도메인을 가로질러 공유하는 코드만 `neki_workflow/flows/common/`에 둡니다.
+먼저 `src/neki_workflow/flows/<도메인>/<작업>/`을 만들고 task를 역할별 모듈에 담습니다.
+지점 flow가 함께 쓰는 코드는 `src/neki_workflow/flows/stores/common/`에 둡니다.
+도메인을 가로질러 공유하는 코드만 `src/neki_workflow/flows/common/`에 둡니다.
 
 ```python
-# neki_workflow/flows/example/daily_sync/orders.py
+# src/neki_workflow/flows/example/daily_sync/orders.py
 from prefect import task
 
 
@@ -139,7 +141,7 @@ def fetch_orders() -> list[dict]:
 같은 디렉토리의 `flow.py`에서 순서를 조립합니다.
 
 ```python
-# neki_workflow/flows/example/daily_sync/flow.py
+# src/neki_workflow/flows/example/daily_sync/flow.py
 from prefect import flow
 
 from neki_workflow.flows.example.daily_sync.orders import fetch_orders
@@ -153,13 +155,13 @@ def daily_sync() -> None:
 `__init__.py`에서 flow만 재노출합니다.
 
 ```python
-# neki_workflow/flows/example/daily_sync/__init__.py
+# src/neki_workflow/flows/example/daily_sync/__init__.py
 from neki_workflow.flows.example.daily_sync.flow import daily_sync
 
 __all__ = ["daily_sync"]
 ```
 
-마지막으로 `neki_workflow/deployments/example/daily_sync.py`에 `RunnerDeployment`를 반환하는 `build()`를
+마지막으로 `src/neki_workflow/deployments/example/daily_sync.py`에 `RunnerDeployment`를 반환하는 `build()`를
 정의합니다. `serve.py`와 `deploy.py`가 이 이름으로 찾아가므로 함수명은 반드시
 `build`여야 합니다.
 
@@ -303,7 +305,7 @@ Kakao Developers에서 앱을 만들고 `앱` > `플랫폼 키` > **REST API 키
 `iframe`(`tab000`, `tab00`)으로 나뉘어 있고 사람이 손으로 만든 텍스트 위젯이라
 주소가 두 줄로 쪼개진 항목이 있으며, 무엇보다 제주 지점 주소로 서울 주소가 들어가
 있는 등 **사이트가 틀린 값을 줍니다.** 자세한 근거는
-`neki_workflow/flows/stores/collect/photolabplus/flow.py`의 docstring에 있습니다.
+`src/neki_workflow/flows/stores/collect/photolabplus/flow.py`의 docstring에 있습니다.
 
 비룸스튜디오는 브랜드 사이트가 아니라 Kakao 장소검색만이 수집원입니다.
 `broomstudio.co.kr`이 `www`, `m` 서브도메인까지 모두 NXDOMAIN이라 긁을 사이트가

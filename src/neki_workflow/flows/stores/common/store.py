@@ -8,7 +8,7 @@
 "이 값이 틀렸을 때 누구 잘못인가"이며, 여기서는 언제나 사이트 잘못이다.
 
 좌표만 예외다. 사이트가 좌표를 주지 않으면 그 지점은 색인에서 통째로 빠지므로
-`neki_workflow/flows/stores/common/geocode.py`가 주소로 채운다. 그래서 좌표는 유일하게 우리가 만든
+`src/neki_workflow/flows/stores/common/geocode.py`가 주소로 채운다. 그래서 좌표는 유일하게 우리가 만든
 값이 섞일 수 있는 필드이고, coordinate_source가 그것을 드러낸다.
 
 collected_at은 여기 없다. 사이트가 준 값이 아니라 우리가 언제 받았는지이므로

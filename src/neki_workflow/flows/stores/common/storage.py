@@ -30,7 +30,7 @@ raw 가 같은 값을 쓰므로 어느 원문이 어느 CSV 를 만들었는지 
 같은 날 다시 돌리면 CSV 도 raw 폴더도 하나 더 생기고 이전 것은 남는다.
 
 어느 CSV 가 현재인지는 S3 가 아니라 Postgres 의 `tb_store_collect_manifest` 행이
-가리킨다(`neki_workflow/flows/stores/common/manifest.py`). 읽는 쪽은 그 행의 `s3_path` 만 따라간다.
+가리킨다(`src/neki_workflow/flows/stores/common/manifest.py`). 읽는 쪽은 그 행의 `s3_path` 만 따라간다.
 실행 하나의 요약(어느 브랜드가 성공하고 무엇으로 대신했나)은 S3 에 남기지 않는다.
 실패 사유는 Prefect 로그에 있고, 무엇을 읽을지는 `manifest.read_cycle` 이 테이블에서
 읽는 시점에 계산한다.

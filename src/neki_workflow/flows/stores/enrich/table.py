@@ -1,6 +1,6 @@
 """enrich 결과로 테이블을 새로 만들어 기존 것과 바꿔치운다.
 
-법정동(neki_workflow/flows/legal_dong/table.py)과 같은 바꿔치기다. 매 실행이 전량이라 증분을
+법정동(src/neki_workflow/flows/legal_dong/table.py)과 같은 바꿔치기다. 매 실행이 전량이라 증분을
 계산하지 않고, 사이클 날짜를 붙인 테이블을 채워 이름만 맞바꾸며 직전 세대는
 _prev 로 남긴다. 한 트랜잭션, lock_timeout 을 첫 문장으로, _prev 를 맨 앞에서
 치우는 이유, 인덱스 이름을 되돌리지 않는 이유는 그쪽 docstring 과 같다.
