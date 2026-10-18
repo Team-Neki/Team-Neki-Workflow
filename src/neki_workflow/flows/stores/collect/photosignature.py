@@ -9,7 +9,7 @@ from neki_workflow.flows.stores.common.output import log_stores
 from neki_workflow.flows.stores.common.platform import Platform
 from neki_workflow.flows.stores.common.storage import put_raw, put_stores
 from neki_workflow.flows.stores.common.store import CollectedStore
-from neki_workflow.flows.stores.collect.photosignature.stores import fetch_store_page, parse_stores
+from neki_workflow.flows.stores.collect.photosignature_stores import fetch_store_page, parse_stores
 
 
 @flow(name="photosignature-stores", log_prints=True)

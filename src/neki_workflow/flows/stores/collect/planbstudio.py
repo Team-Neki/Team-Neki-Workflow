@@ -10,7 +10,7 @@ from neki_workflow.flows.stores.common.output import log_stores
 from neki_workflow.flows.stores.common.platform import Platform
 from neki_workflow.flows.stores.common.storage import put_raw, put_stores
 from neki_workflow.flows.stores.common.store import CollectedStore
-from neki_workflow.flows.stores.collect.planbstudio.stores import (
+from neki_workflow.flows.stores.collect.planbstudio_stores import (
     fetch_store_page,
     parse_coordinates,
     parse_stores,

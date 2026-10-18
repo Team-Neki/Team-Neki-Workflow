@@ -117,7 +117,7 @@ k8s Job 으로 만들고 종료 코드를 flow 결과로 삼습니다. 정책은
 - task 함수 : 동사로 시작 (e.g. `fetch_orders`, `upload_report`)
 
 deployment는 대응 flow와 같은 도메인에 둡니다. `deployments/stores/photoism.py`는
-`flows/stores/collect/photoism/`을 실행합니다. 기존 Prefect flow와 deployment의
+`flows/stores/collect/photoism.py`를 실행합니다. 기존 Prefect flow와 deployment의
 등록 이름은 경로를 이동해도 유지합니다.
 
 ## 워크플로 추가하기
@@ -125,7 +125,8 @@ deployment는 대응 flow와 같은 도메인에 둡니다. `deployments/stores/
 `serve.py`와 `deploy.py`는 건드리지 않습니다. flow와 deployment를 추가합니다.
 
 먼저 `src/neki_workflow/flows/<도메인>/<작업>/`을 만들고 task를 역할별 모듈에 담습니다.
-지점 flow가 함께 쓰는 코드는 `src/neki_workflow/flows/stores/common/`에 둡니다.
+브랜드 수집기는 `collect/<브랜드>.py`, 별도 task는 `collect/<브랜드>_stores.py`로 추가하며
+브랜드별 하위 폴더는 만들지 않습니다. 지점 flow가 함께 쓰는 코드는 `src/neki_workflow/flows/stores/common/`에 둡니다.
 도메인을 가로질러 공유하는 코드만 `src/neki_workflow/flows/common/`에 둡니다.
 
 ```python
@@ -305,7 +306,7 @@ Kakao Developers에서 앱을 만들고 `앱` > `플랫폼 키` > **REST API 키
 `iframe`(`tab000`, `tab00`)으로 나뉘어 있고 사람이 손으로 만든 텍스트 위젯이라
 주소가 두 줄로 쪼개진 항목이 있으며, 무엇보다 제주 지점 주소로 서울 주소가 들어가
 있는 등 **사이트가 틀린 값을 줍니다.** 자세한 근거는
-`src/neki_workflow/flows/stores/collect/photolabplus/flow.py`의 docstring에 있습니다.
+`src/neki_workflow/flows/stores/collect/photolabplus.py`의 docstring에 있습니다.
 
 비룸스튜디오는 브랜드 사이트가 아니라 Kakao 장소검색만이 수집원입니다.
 `broomstudio.co.kr`이 `www`, `m` 서브도메인까지 모두 NXDOMAIN이라 긁을 사이트가

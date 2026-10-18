@@ -223,7 +223,7 @@ DB 에 닿는지는 본문을 올리기 전에 확인하고, 행은 본문을 �
 구현 : `src/neki_workflow/flows/stores/common/manifest.py:146` `def target_date`,
 `src/neki_workflow/flows/stores/collect/flow.py:138` `cycle = target_date()`,
 `src/neki_workflow/flows/stores/collect/flow.py:144` `target_date=cycle`,
-`src/neki_workflow/flows/stores/collect/photoism/flow.py:28` `target_date: date | None = None`,
+`src/neki_workflow/flows/stores/collect/photoism.py:28` `target_date: date | None = None`,
 `src/neki_workflow/flows/stores/common/storage.py:117` `def run_at`
 
 ## 실패한 브랜드는 무엇으로 대신하나

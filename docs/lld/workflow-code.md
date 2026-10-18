@@ -3,8 +3,9 @@
 ## 구조
 
 도메인 아래에 워크플로를 둡니다. 지점은 `stores` 아래 collect, enrich, sync 로
-나누고 브랜드별 수집기는 collect 아래에 둡니다. `@flow`와 `@task`는 같은
-워크플로 디렉토리에 두되 파일을 나눕니다. 배포 설정은 별도로 모읍니다.
+나누고 브랜드별 수집기는 collect 바로 아래 `<브랜드>.py`에 둡니다. 별도 task
+모듈은 `<브랜드>_stores.py`로 구분하며 브랜드별 하위 폴더는 만들지 않습니다.
+배포 설정은 별도로 모읍니다.
 
 ```text
 src/neki_workflow/
@@ -19,8 +20,9 @@ src/neki_workflow/
     stores/
       collect/             지점 수집 총괄
         flow.py
-        photoism/          브랜드 수집 flow
-          flow.py
+        photoism.py        브랜드 수집 flow
+        photosignature.py
+        photosignature_stores.py  브랜드별 수집 task
       enrich/              법정동 보강
       sync/                지점 마스터 동기화
       common/              지점 스키마·S3 적재·manifest·수집 공통 코드
@@ -38,8 +40,8 @@ tests/                    순수 판정 테스트. make check 가 돌림. Kakao 
 
 의존은 `neki_workflow.deployments -> neki_workflow.flows` 단방향입니다. `src/neki_workflow/flows/`가 스케줄을 알면 안 됩니다.
 
-워크플로 안에서는 `flow.py`가 task 모듈을 import하고 그 반대는 없습니다. task
-모듈이 `flow.py`를 import해야 할 것 같다면 대개 인자로 받아야 할 값을 import로
+워크플로 안에서는 flow 모듈이 task 모듈을 import하고 그 반대는 없습니다. task
+모듈이 flow 모듈을 import해야 할 것 같다면 대개 인자로 받아야 할 값을 import로
 끌어온 것이므로, 시그니처를 먼저 의심해볼 수 있습니다.
 
 `__init__.py`는 flow 함수만 재노출합니다. 그래야 `src/neki_workflow/deployments/`가
