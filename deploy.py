@@ -1,4 +1,4 @@
-"""deployments/ 의 스케줄을 Prefect API에 등록한다.
+"""neki_workflow/deployments/ 의 스케줄을 Prefect API에 등록한다.
 
 실행은 하지 않는다. 워크플로를 실제로 돌리는 것은 work pool에 붙은
 worker이고, 이 스크립트는 정의만 갱신한다.
@@ -25,7 +25,7 @@ from prefect.client.orchestration import get_client
 from prefect.deployments.runner import RunnerDeployment
 from prefect.exceptions import ObjectNotFound
 
-from deployments import collect
+from neki_workflow.deployments import collect
 
 
 @dataclass
@@ -107,7 +107,7 @@ def resolve_pool(deployment: RunnerDeployment, default_pool: str | None) -> str:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="deployments/ 를 Prefect API에 등록")
+    parser = argparse.ArgumentParser(description="neki_workflow/deployments/ 를 Prefect API에 등록")
     parser.add_argument(
         "--pool",
         default=os.environ.get("PREFECT_WORK_POOL"),

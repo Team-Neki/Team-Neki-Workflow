@@ -9,11 +9,11 @@
   `coordinate_source` 로 구분함. 주소는 enrich 도 해석하지 않고, 이름은 enrich 가
   앞머리 브랜드 표기만 통일함(`포토이즘 박스` -> `포토이즘`). 브랜드·지점명 분리 같은
   검색용 정규화는 서버 batch(index)가 함
-- 브랜드별 `Store` 를 두지 않음. `flows/common/store.py` 의 `CollectedStore` 하나.
+- 브랜드별 `Store` 를 두지 않음. `neki_workflow/flows/stores/common/store.py` 의 `CollectedStore` 하나.
   필드를 더하면 `storage.COLUMNS` 에도 넣어야 함. 빠뜨리면 `DictWriter` 가 막음
-- 브랜드를 더하면 `flows/stores_collect/flow.py` 의 `BRANDS` 에도 등록. 빠뜨리면
+- 브랜드를 더하면 `neki_workflow/flows/stores/collect/flow.py` 의 `BRANDS` 에도 등록. 빠뜨리면
   정기 수집에서만 조용히 빠짐
-- imweb 브랜드(인생네컷, 포토이즘, 돈룩업)는 `flows/common/imweb_map.py` 하나가
+- imweb 브랜드(인생네컷, 포토이즘, 돈룩업)는 `neki_workflow/flows/stores/common/imweb_map.py` 하나가
   맡음. 브랜드별 분기를 이 모듈에 넣지 않음
 - S3 는 `collect/platform=<브랜드>/dt=<대상 일자>/<실행 시각>.csv` 와 같은 파티션의
   `_raw/<실행 시각>/`. `raw/`, `runs/`, `_manifest.json`, `.gz` 는 없음. 다시
@@ -70,5 +70,5 @@
   prefect-kubernetes 가 이름으로 상태를 읽음
 - `prefect-kubernetes` 버전은 Dockerfile 베이스와 같아야 함. 다르면 이미지 안의
   것이 교체됨
-- 스케줄은 `deployments/search_index.py` 의 05:30 KST cron. UI 에서 붙인 스케줄은
+- 스케줄은 `neki_workflow/deployments/search_index.py` 의 05:30 KST cron. UI 에서 붙인 스케줄은
   배포가 지우므로 스케줄은 코드에서만 바꿈

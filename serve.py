@@ -1,4 +1,4 @@
-"""deployments/ 의 모든 스케줄을 한 프로세스로 서빙한다.
+"""neki_workflow/deployments/ 의 모든 스케줄을 한 프로세스로 서빙한다.
 
 로컬 개발용이다. 이 프로세스가 스케줄러와 워커를 겸하므로 서버나
 work pool 없이 바로 확인할 수 있다.
@@ -10,7 +10,7 @@ work pool 없이 바로 확인할 수 있다.
 
 from prefect import serve
 
-from deployments import collect
+from neki_workflow.deployments import collect
 
 
 def main() -> None:

@@ -4,9 +4,9 @@ from datetime import UTC, date, datetime
 
 import pytest
 
-from deployments.stores_sync import build
-from flows.stores_sync import flow as flow_module
-from flows.stores_sync.records import SourceStore, prepare
+from neki_workflow.deployments.stores.sync import build
+from neki_workflow.flows.stores.sync import flow as flow_module
+from neki_workflow.flows.stores.sync.records import SourceStore, prepare
 
 CYCLE = date(2026, 9, 27)
 NOW = datetime(2026, 9, 27, 4, 0, tzinfo=UTC).replace(tzinfo=None)

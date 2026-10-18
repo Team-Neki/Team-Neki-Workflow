@@ -10,7 +10,7 @@
 바꿀 수 있어 편하지만 설정이 Prefect 서버 상태에 얹히므로 서버를 갈아치우거나
 다른 환경에서 같은 flow를 돌릴 때 값이 따라오지 않습니다.
 
-**DDL은 `flows/legal_dong/table.py`가 소유합니다.** 매월 새 테이블을 만들어 이름을
+**DDL은 `neki_workflow/flows/legal_dong/table.py`가 소유합니다.** 매월 새 테이블을 만들어 이름을
 바꿔 끼우므로 Team-Neki-Server의 Flyway로 이 테이블을 만들거나 바꾸지 않습니다.
 Flyway에 `CREATE TABLE`을 넣으면 이미 있는 테이블 때문에 마이그레이션이 실패하고,
 `ALTER`로 바꾼 것은 다음 바꿔치기에서 사라집니다. Server는 마이그레이션 없이
