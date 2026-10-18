@@ -1,0 +1,25 @@
+# PR 이 열릴 때만 Discord 로 알린다. 커밋 푸시, 리뷰, 닫힘은 보내지 않는다.
+# pull_request_target 은 base 브랜치의 이 파일로 돌아 secret 을 읽는다. PR 코드를 checkout 하지 않는다.
+name: pr-notify
+
+on:
+  pull_request_target:
+    types: [opened]
+
+permissions: {}
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          WEBHOOK: ${{ secrets.DISCORD_PR_WEBHOOK }}
+          REPO: ${{ github.repository }}
+          NUMBER: ${{ github.event.pull_request.number }}
+          TITLE: ${{ github.event.pull_request.title }}
+          AUTHOR: ${{ github.event.pull_request.user.login }}
+          URL: ${{ github.event.pull_request.html_url }}
+        run: |
+          jq -n --arg c "[$REPO] #$NUMBER $TITLE ($AUTHOR)
+          $URL" '{content: $c, allowed_mentions: {parse: []}}' |
+            curl -fsS -H 'Content-Type: application/json' -d @- "$WEBHOOK"

@@ -6,18 +6,23 @@ _prev 로 남긴다. 한 트랜잭션, lock_timeout 을 첫 문장으로, _prev 
 치우는 이유, 인덱스 이름을 되돌리지 않는 이유는 그쪽 docstring 과 같다.
 
 index(서버 batch, BACKEND-65)는 현재 세대 이름 tb_photo_booth_enriched 하나만
-안다. 그쪽과의 계약은 platform, idx, name, address, longitude, latitude,
-source_dt, b_code 여덟 열이다. 나머지는 운영 확인용이라 바꿔도 index 를 깨지
-않는다. b_code 가 NULL 인 행도 남긴다. index 가 region_ids 만 비우고 카드는
+안다. 그쪽과의 계약은 platform, idx, name, address, location, source_dt,
+b_code 일곱 열이다. 나머지는 운영 확인용이라 바꿔도 index 를 깨지 않는다. b_code 가 NULL 인 행도 남긴다. index 가 region_ids 만 비우고 카드는
 만든다.
 
 관리자 등록 지점(tb_photo_booth_manual)도 같은 테이블에 source_type = MANUAL 로
 함께 담는다(read_manual). index 는 수집 지점과 구분하지 않고 같은 규칙으로 카드를 만든다.
 
+좌표는 tb_photo_booth_location, tb_subway_station 과 같은 모양으로
+location geometry(Point, 4326) 하나에 담는다(BACKEND-244). EnrichedStore 는 경도와
+위도 두 필드 그대로 두고, COPY 할 때 EWKT 로 합치고(_row) 직전 세대를 읽을 때
+ST_X / ST_Y 로 되돌린다(_SELECT). 판정 코드는 좌표 모양을 모른다.
+
 직전 세대는 스왑 전에 읽어 재사용 판정에 쓴다(read_current). 같은 트랜잭션일
 필요가 없다. 읽은 뒤 누가 스왑해도 답이 낡을 뿐 틀리지는 않는다.
 """
 
+import math
 from dataclasses import astuple
 from datetime import date, datetime
 from typing import Any
@@ -39,6 +44,26 @@ MANUAL_TABLE = "tb_photo_booth_manual"
 # 법정동 마스터. 여기 없는 b_code 를 세어 개편 뒤 마스터가 낡은 것을 드러낸다.
 LEGAL_DONG_TABLE = "tb_legal_dong"
 
+# EnrichedStore 의 경도·위도 두 필드가 테이블에서는 경도 자리의 location 한 열이다.
+# 나머지 열은 COLUMNS 순서 그대로다.
+_LONGITUDE = COLUMNS.index("longitude")
+_LATITUDE = COLUMNS.index("latitude")
+TABLE_COLUMNS = tuple(
+    "location" if name == "longitude" else name
+    for name in COLUMNS
+    if name != "latitude"
+)
+
+# 직전 세대를 EnrichedStore 필드 순서로 읽는다. location 을 경도·위도로 되돌린다.
+_SELECT = ", ".join(
+    "ST_X(location) AS longitude"
+    if name == "longitude"
+    else "ST_Y(location) AS latitude"
+    if name == "latitude"
+    else name
+    for name in COLUMNS
+)
+
 # DROP 과 스왑이 락을 못 잡을 때 물러나는 시간. 길게 잡으면 그만큼 앱의 읽기가
 # 우리 뒤에 줄 서므로 짧아야 한다.
 LOCK_TIMEOUT = "5s"
@@ -53,9 +78,30 @@ def staging_name(cycle: date) -> str:
     return f"{TABLE}_{cycle:%Y%m%d}"
 
 
+def _location(longitude: float | None, latitude: float | None) -> str | None:
+    """경도·위도를 geometry 입력 문자열(EWKT)로. 하나라도 없거나 유한하지 않으면 NULL.
+
+    repr 은 float 를 되읽으면 같은 값이 나오는 가장 짧은 표기라, ST_X / ST_Y 로
+    되돌린 값이 원래 float 와 같다. 재사용 판정(region.reusable)이 동등 비교다.
+    """
+    if longitude is None or latitude is None:
+        return None
+    if not (math.isfinite(longitude) and math.isfinite(latitude)):
+        return None
+    return f"SRID=4326;POINT({longitude!r} {latitude!r})"
+
+
+def _row(store: EnrichedStore) -> tuple[Any, ...]:
+    """EnrichedStore 한 행을 TABLE_COLUMNS 순서의 COPY 값으로."""
+    values = list(astuple(store))
+    values[_LONGITUDE] = _location(store.longitude, store.latitude)
+    del values[_LATITUDE]
+    return tuple(values)
+
+
 def _ddl(staging: str) -> str:
-    """컬럼 순서는 region.COLUMNS(EnrichedStore 필드 순서)와 같아야 한다. COPY 가
-    그 순서로 값을 받는다.
+    """컬럼 순서는 TABLE_COLUMNS(EnrichedStore 필드 순서에서 경도·위도를 location
+    하나로 합친 것)와 같아야 한다. COPY 가 그 순서로 값을 받는다.
     """
     return f"""
 CREATE TABLE {staging} (
@@ -66,8 +112,7 @@ CREATE TABLE {staging} (
     name                VARCHAR(255)     NOT NULL,
     address             VARCHAR(255),
     phone               VARCHAR(32),
-    longitude           DOUBLE PRECISION,
-    latitude            DOUBLE PRECISION,
+    location            geometry(Point, 4326),
     coordinate_source   VARCHAR(16),
     collected_at        TIMESTAMP        NOT NULL,
     source_dt           DATE             NOT NULL,
@@ -100,6 +145,7 @@ COMMENT ON COLUMN {staging}.platform IS '브랜드 (flows.common.platform.Platfo
 COMMENT ON COLUMN {staging}.idx IS '사이트가 준 지점 식별자. platform 안에서만 유일';
 COMMENT ON COLUMN {staging}.name IS '지점 이름. 사이트 원문에서 앞머리 브랜드 표기만 통일 (예: 포토이즘 박스 -> 포토이즘)';
 COMMENT ON COLUMN {staging}.address IS '주소, 사이트 원문 (해석하지 않음)';
+COMMENT ON COLUMN {staging}.location IS '좌표 (SRID 4326, x 경도 y 위도). 없으면 NULL';
 COMMENT ON COLUMN {staging}.coordinate_source IS '좌표 출처. official / kakao / manual (관리자 입력) / NULL (좌표 없음)';
 COMMENT ON COLUMN {staging}.collected_at IS '수집 시각 (KST 벽시계, 시간대 없음). MANUAL 은 관리자가 마지막으로 고친 시각';
 COMMENT ON COLUMN {staging}.source_dt IS '어느 수집 사이클에서 왔나. 오늘이 아니면 그 브랜드는 이전 사이클로 대신한 것. MANUAL 은 적재한 사이클';
@@ -128,7 +174,7 @@ def read_current() -> dict[tuple[str, str], EnrichedStore]:
             if cursor.fetchone()[0] is None:
                 return {}
             try:
-                cursor.execute(f"SELECT {', '.join(COLUMNS)} FROM {TABLE}")
+                cursor.execute(f"SELECT {_SELECT} FROM {TABLE}")
             except errors.UndefinedColumn as error:
                 logger.warning(
                     "%s 의 컬럼이 지금 스키마와 달라 재사용하지 않습니다: %s", TABLE, error
@@ -142,12 +188,11 @@ def read_current() -> dict[tuple[str, str], EnrichedStore]:
     return {(row.platform, row.idx): row for row in rows}
 
 
-def read_manual() -> tuple[list[dict[str, Any]], int]:
-    """관리자 등록 지점 중 살아 있는 것을 읽는다. (적재할 행, 브랜드 platform 이 없어 뺀 수).
+def read_manual() -> list[dict[str, Any]]:
+    """관리자 등록 지점 중 살아 있는 것을 읽는다.
 
-    platform 은 브랜드의 tb_brand.platform 이다. 서버 색인이 그 값으로 브랜드를 찾으므로
-    platform 이 없는 브랜드(수집하지 않는 브랜드)의 지점은 넣어도 색인에서 빠진다. 그래서
-    여기서 빼고 건수만 돌려준다. 삭제된 브랜드의 지점도 뺀다.
+    platform 은 브랜드의 tb_brand.code 다. 서버 색인이 그 값으로 브랜드를 찾는다.
+    수집하지 않는 브랜드의 지점도 담는다. 삭제된 브랜드의 지점은 뺀다.
 
     테이블이 없으면(서버 마이그레이션 전) 빈 목록이다. 수집 지점만으로 enrich 는 돈다.
     """
@@ -161,10 +206,10 @@ def read_manual() -> tuple[list[dict[str, Any]], int]:
                     "%s 이 없어 관리자 등록 지점 없이 보강합니다. 서버 마이그레이션(V35)을 확인하세요.",
                     MANUAL_TABLE,
                 )
-                return [], 0
+                return []
             cursor.execute(
                 f"""
-                SELECT m.id, b.platform, m.branch_name, m.address, m.phone,
+                SELECT m.id, b.code AS platform, m.branch_name, m.address, m.phone,
                        ST_X(m.location) AS longitude, ST_Y(m.location) AS latitude,
                        m.updated_at
                 FROM {MANUAL_TABLE} m
@@ -173,10 +218,7 @@ def read_manual() -> tuple[list[dict[str, Any]], int]:
                 ORDER BY m.id
                 """
             )
-            rows = cursor.fetchall()
-
-    records = [row for row in rows if row["platform"] is not None]
-    return records, len(rows) - len(records)
+            return cursor.fetchall()
 
 
 @task
@@ -214,10 +256,10 @@ def swap_table(stores: list[EnrichedStore], *, cycle: date) -> dict[str, int]:
             cursor.execute(_ddl(staging))
 
             with cursor.copy(
-                f"COPY {staging} ({', '.join(COLUMNS)}) FROM STDIN"
+                f"COPY {staging} ({', '.join(TABLE_COLUMNS)}) FROM STDIN"
             ) as copy:
                 for store in stores:
-                    copy.write_row(astuple(store))
+                    copy.write_row(_row(store))
 
             cursor.execute(_indexes(staging))
             cursor.execute(_comments(staging))

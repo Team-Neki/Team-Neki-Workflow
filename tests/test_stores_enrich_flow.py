@@ -24,7 +24,7 @@ def pipeline(monkeypatch):
         previous=previous,
         logger=Mock(),
         read=Mock(return_value=(rows, {})),
-        manual=Mock(return_value=([], 0)),
+        manual=Mock(return_value=[]),
         current=Mock(return_value=previous),
         enrich=Mock(return_value=rows),
         swap=Mock(return_value={"unknown_codes": 0, "count": 1}),
@@ -107,7 +107,7 @@ MANUAL_RECORD = {
 
 
 def test_manual_stores_are_enriched_with_collected(pipeline):
-    pipeline.manual.return_value = ([MANUAL_RECORD], 2)
+    pipeline.manual.return_value = [MANUAL_RECORD]
     pipeline.enrich.side_effect = lambda stores, _previous: stores
     result = flow_module.stores_enrich.fn(target_date=CYCLE)
     stores = pipeline.enrich.call_args.args[0]
@@ -115,12 +115,11 @@ def test_manual_stores_are_enriched_with_collected(pipeline):
     assert stores[1].source_type == "MANUAL"
     assert stores[1].source_dt == CYCLE
     assert result["manual"] == 1
-    assert any("platform" in call.args[0] for call in pipeline.logger.warning.call_args_list)
 
 
 def test_manual_stores_do_not_count_toward_minimum(pipeline, monkeypatch):
     monkeypatch.setattr(flow_module, "MIN_EXPECTED", 2)
-    pipeline.manual.return_value = ([MANUAL_RECORD], 0)
+    pipeline.manual.return_value = [MANUAL_RECORD]
     with pytest.raises(ValueError, match="수집 지점이 1건"):
         flow_module.stores_enrich.fn(target_date=CYCLE)
     pipeline.swap.assert_not_called()
@@ -170,14 +169,14 @@ def _enriched(platform, idx, *, source_type="COLLECTED", b_code="1168010100"):
 def test_report_lines_up_s3_and_enriched_per_brand():
     brands = {
         "PHOTOISM": {"status": "fresh", "source_dt": CYCLE, "s3": 3},
-        "PICDOT": {"status": "stale", "source_dt": date(2026, 9, 24), "s3": 1},
-        "HARU_FILM": {"status": "failed", "source_dt": None, "s3": 0},
+        "PIC_DOT": {"status": "stale", "source_dt": date(2026, 9, 24), "s3": 1},
+        "HARUFILM": {"status": "failed", "source_dt": None, "s3": 0},
     }
     enriched = [
         _enriched("PHOTOISM", "1"),
         _enriched("PHOTOISM", "2", b_code=None),
         _enriched("PHOTOISM", "manual-7", source_type="MANUAL"),
-        _enriched("PICDOT", "1"),
+        _enriched("PIC_DOT", "1"),
     ]
     swapped = {"loaded": 4, "before": 3, "swapped": 1, "unknown_codes": 0}
     lines = flow_module._report(
@@ -188,8 +187,8 @@ def test_report_lines_up_s3_and_enriched_per_brand():
     assert "직전 세대 3건 (+1)" in text
     # platform, s3, enriched(수집), manual, no_bcode
     assert any(line.split() == ["PHOTOISM", "3", "2", "1", "1"] for line in lines)
-    assert any(line.split() == ["PICDOT", "1", "1", "0", "0"] for line in lines)
-    assert any(line.split() == ["HARU_FILM", "0", "0", "0", "0"] for line in lines)
+    assert any(line.split() == ["PIC_DOT", "1", "1", "0", "0"] for line in lines)
+    assert any(line.split() == ["HARUFILM", "0", "0", "0", "0"] for line in lines)
     assert any(line.split() == ["total", "4", "3", "1", "1"] for line in lines)
-    assert "HARU_FILM: 쓸 적재물이 없어 뺐습니다" in text
-    assert "PICDOT: 2026-09-24 사이클로 대신했습니다" in text
+    assert "HARUFILM: 쓸 적재물이 없어 뺐습니다" in text
+    assert "PIC_DOT: 2026-09-24 사이클로 대신했습니다" in text

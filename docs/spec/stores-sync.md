@@ -12,6 +12,9 @@
   enrich가 함께 담은 관리자 등록 지점(`source_type = 'MANUAL'`, `idx = manual-<id>`,
   `docs/spec/enrich-pipeline.md`)도 같은 원천 키로 동기화합니다.
   enriched에 `source_type` 열이 생기기 전(새 enrich가 한 번 돌기 전)에는 실패합니다.
+  좌표는 enriched의 `location`(`geometry(Point, 4326)`)을 `ST_X`/`ST_Y`로 풀어 읽으므로
+  `location` 열이 생기기 전(BACKEND-244 뒤 enrich가 한 번 돌기 전)에도 실패합니다.
+  둘 다 쓰기 전에 어느 변경 뒤 enrich를 먼저 돌려야 하는지 알려 주고 멈춥니다.
 - 외부 사이트, Kakao, S3는 부르지 않습니다. 접속은 기존 `DATABASE_URL`을 씁니다.
 - `target_date`는 허용할 수집 사이클의 상한이며 기본값은 run 예약일(KST)입니다.
   미래 `source_dt`는 제외합니다. 과거 S3 스냅샷을 복원하는 백필은 아닙니다.
@@ -23,7 +26,7 @@
   수집 중지, 지도 조회 범위 전환과 검색 색인의 지점 참조 전환이 준비된 뒤 스케줄을 정합니다.
 
 구현 : `flows/stores_sync/flow.py:13` `def stores_sync`,
-`flows/stores_sync/table.py:44` `%(source_type)s`,
+`flows/stores_sync/table.py:52` `%(source_type)s`,
 `flows/stores_sync/records.py:32` `def prepare`,
 `deployments/stores_sync.py:9` `to_deployment(name="stores-sync"`
 
@@ -38,7 +41,7 @@
   배치는 원천 키가 있는 행에만 INSERT/UPDATE합니다. 입력의 `source_type`을 그대로 쓰고,
   기존 행과 `source_type`이 다르면 갱신하지 않습니다. 원천 키가 없는 LEGACY와
   어드민이 마스터에 직접 넣은 MANUAL은 건드리지 않습니다.
-- 관리자 등록 지점(`tb_photo_booth_manual`)은 원천 키 `(tb_brand.platform, manual-<id>)`로
+- 관리자 등록 지점(`tb_photo_booth_manual`)은 원천 키 `(tb_brand.code, manual-<id>)`로
   upsert합니다. 키가 있어 검색 카드와 `(platform, idx)`로 짝지어집니다.
   관리자 지점이 삭제(`deleted_at`)되어 enrich 입력에서 빠져도 마스터 행은 수집 지점과
   같이 지우지 않습니다. 노출 중지는 `admin_hidden`으로 합니다.
@@ -60,8 +63,9 @@
 - 수집에서 빠진 지점도 삭제하거나 비활성화하지 않습니다. 현재 enrich는 실패한
   브랜드를 제외하므로 부재만으로 폐점을 확정할 수 없습니다. 폐점은 관리자 판단입니다.
 
-구현 : `flows/stores_sync/table.py:36` `UPSERT`,
-`flows/stores_sync/table.py:72` `def require_schema`
+구현 : `flows/stores_sync/table.py:44` `UPSERT`,
+`flows/stores_sync/table.py:80` `def require_schema`,
+`flows/stores_sync/table.py:111` `def require_enriched`
 
 ## 트랜잭션과 재실행
 
@@ -74,8 +78,8 @@
 - `persist=False`는 입력·브랜드·스키마를 읽고 예상 건수만 반환합니다.
   지점 INSERT/UPDATE, S3 업로드, 검색 색인 실행은 하지 않습니다.
 
-구현 : `flows/stores_sync/table.py:103` `def synchronize`,
-`flows/stores_sync/table.py:194` `def sync_locations`
+구현 : `flows/stores_sync/table.py:130` `def synchronize`,
+`flows/stores_sync/table.py:223` `def sync_locations`
 
 ## 조회와 색인 연결의 후속 계약
 
@@ -92,7 +96,7 @@
 
 - `make check`: spec anchor, deployment 수집, 입력 판정·flow 테스트
 - `make stores-sync-dry-run`: 현재 환경의 입력 및 스키마 확인, 쓰기 없음
-- `make test-stores-sync-db`: 전용 PostGIS DB의 격리 schema에서 실제 upsert 검증
+- `make test-stores-sync-db`: 전용 PostGIS DB의 격리 schema에서 실제 upsert와 enrich 좌표 왕복 검증
   (`STORES_SYNC_TEST_DATABASE_URL` 필수, 앱 DATABASE_URL을 대신 사용하지 않음)
 - 마이그레이션 적용 전 실패(V34, V36), 동일 입력 두 번의 ID 유지, override 유지,
   관리자 등록 지점의 MANUAL 동기화, 원천 키 없는 MANUAL/LEGACY 유지, admin_hidden 유지, 오래된 입력 차단, 실패 시 롤백을 확인합니다.

@@ -14,6 +14,10 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: astral-sh/setup-uv@v7
-      - run: uv sync --python 3.13 --frozen
+        with:
+          # 운영 이미지(Dockerfile 베이스)와 같은 Python. 비우면 uv 가 최신(3.15)을 받는데
+          # psycopg-binary 휠이 아직 없어 uv sync 가 실패한다.
+          python-version: "3.13"
+      - run: uv sync --frozen
       - run: make check
       - run: make image

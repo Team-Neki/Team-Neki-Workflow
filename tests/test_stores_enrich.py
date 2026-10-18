@@ -6,7 +6,7 @@ from datetime import date, datetime
 
 import pytest
 
-from flows.stores_enrich import region
+from flows.stores_enrich import region, table
 from flows.stores_enrich.name import unify_brand
 from flows.stores_enrich.region import (
     EnrichedStore,
@@ -74,7 +74,7 @@ def test_from_collect_marks_collected():
     assert row.source_type == "COLLECTED"
 
 
-def test_from_manual_uses_brand_platform_and_prefixed_idx():
+def test_from_manual_uses_brand_code_and_prefixed_idx():
     record = {
         "id": 7,
         "platform": "PHOTOISM",
@@ -307,3 +307,23 @@ def test_mismatched_compares_first_token_of_sigungu():
     )
     assert not mismatched(store(address=None, sgg_name="강남구"))
     assert not mismatched(store(sgg_name=None))
+
+
+def test_copy_row_merges_coordinate_into_location_at_longitude_position():
+    row = table._row(store(longitude=127.0276, latitude=37.4979))
+    assert len(row) == len(table.TABLE_COLUMNS)
+    values = dict(zip(table.TABLE_COLUMNS, row))
+    assert values["location"] == "SRID=4326;POINT(127.0276 37.4979)"
+    assert table.TABLE_COLUMNS.index("location") == region.COLUMNS.index("longitude")
+    assert "longitude" not in table.TABLE_COLUMNS and "latitude" not in table.TABLE_COLUMNS
+    assert values["coordinate_source"] == "official"
+
+
+@pytest.mark.parametrize(
+    "longitude, latitude",
+    [(None, 37.5), (127.03, None), (float("nan"), 37.5), (127.03, float("inf"))],
+)
+def test_copy_row_location_is_null_without_finite_coordinate(longitude, latitude):
+    row = table._row(store(longitude=longitude, latitude=latitude))
+    assert dict(zip(table.TABLE_COLUMNS, row))["location"] is None
+

@@ -20,16 +20,18 @@ enrich flow 끝에서 색인을 부르지 않습니다. 묶으면 enrich 재시�
 - 색인은 멱등. 같은 `businessDate` 로 다시 돌려도 결과가 같으므로 수동 재실행에
   부담이 없음 (BACKEND-128 의 `RunIdIncrementer` 계약)
 - `businessDate` 는 이 run 의 예약 시각(KST). 백필은 `target_date` 로 줌
-- 스케줄은 BACKEND-65 가 들어올 때 `Cron("30 5 * * *", timezone="Asia/Seoul")`
-  로 붙임. 그 전에 정기로 돌리면 없는 잡 이름으로 종료 코드 1 이라 매일 실패함.
-  스케줄이 없어도 UI 실행 버튼과 `prefect deployment run` 으로 띄울 수 있음
+- 스케줄은 매일 05:30 KST (`Cron("30 5 * * *", timezone="Asia/Seoul")`). enrich
+  (05:00) 뒤 30분. 코드에 둠. UI 에서 붙인 스케줄은 배포(worker 롤링 때 `deploy.py`
+  재등록)가 지움 (BACKEND-244 에서 확인). UI 에서 끈 것은 `deploy.py` 가 보존함.
+  UI 실행 버튼과 `prefect deployment run` 으로 수동 실행도 됨
 - 동시 실행은 `concurrency_limit=1` 로 막음. 서버 잡은 build 와 swap 이 다른
   트랜잭션이라 두 실행의 build 가 swap 보다 먼저 끝나면 두 번째 swap 이 첫 번째를
   되돌려 직전 세대를 서빙하고, 둘 다 COMPLETED 라 알림도 없음
 
 구현 : `flows/search_index/flow.py:25` `def search_index`,
 `flows/search_index/flow.py:33` `cycle = target_date or cycle_date()`,
-`deployments/search_index.py:25` `to_deployment(name="search-index", concurrency_limit=1)`
+`deployments/search_index.py:29` `concurrency_limit=1,`,
+`deployments/search_index.py:30` `schedule=Cron("30 5 * * *"`
 
 ## Job 계약
 
