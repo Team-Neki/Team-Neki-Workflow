@@ -9,7 +9,7 @@
 
 [profile neki-local]
 region = ap-northeast-2
-endpoint_url = http://localhost:4566
+endpoint_url = http://localhost:4576
 # LocalStack 은 키를 검증하지 않는다. 실제 자격증명이 아니므로 커밋해도 된다.
 aws_access_key_id = test
 aws_secret_access_key = test
