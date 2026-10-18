@@ -5,7 +5,7 @@ worker이고, 이 스크립트는 정의만 갱신한다.
 
 등록은 기존 deployment를 덮어쓴다. 그래서 운영자가 UI에서 꺼둔 스케줄이
 배포할 때마다 되살아난다. Prefect는 이를 보존해주지 않으므로 배포 전
-상태를 읽어두고 배포 후 되돌린다.
+상태를 읽어두고 등록 payload 에 반영한다.
 
 운영에서는 worker 파드의 initContainer 가 이미지 안에서 실행한다. 이미지에 구운
 WORKFLOW_IMAGE 를 job_variables.image 로 넣어 flow run 파드가 같은 이미지를 쓰게
@@ -36,10 +36,6 @@ class ScheduleState:
     paused: bool = False
     schedule_active: dict[str | int, bool] = field(default_factory=dict)
 
-    @property
-    def has_disabled(self) -> bool:
-        return self.paused or not all(self.schedule_active.values())
-
 
 def full_name(deployment: RunnerDeployment) -> str:
     return f"{deployment.flow_name}/{deployment.name}"
@@ -67,33 +63,12 @@ async def read_states(names: list[str]) -> dict[str, ScheduleState]:
     return states
 
 
-async def restore_states(states: dict[str, ScheduleState]) -> list[str]:
-    """배포로 되살아난 pause 상태를 원래대로 되돌린다."""
-    restored: list[str] = []
-
-    async with get_client() as client:
-        for name, state in states.items():
-            if not state.has_disabled:
-                continue
-
-            current = await client.read_deployment_by_name(name)
-
-            if state.paused:
-                await client.pause_deployment(current.id)
-
-            for index, schedule in enumerate(current.schedules):
-                key = schedule.slug or index
-                # 배포 전에 없던 스케줄은 켜진 채로 둔다.
-                if state.schedule_active.get(key, True):
-                    continue
-
-                await client.update_deployment_schedule(
-                    current.id, schedule.id, active=False
-                )
-
-            restored.append(name)
-
-    return restored
+def preserve_state(deployment: RunnerDeployment, state: ScheduleState) -> None:
+    """사후 복원 없이 등록할 때부터 기존 활성 상태를 유지한다."""
+    deployment.paused = state.paused
+    for index, schedule in enumerate(deployment.schedules):
+        key = schedule.slug or index
+        schedule.active = state.schedule_active.get(key, schedule.active)
 
 
 def resolve_pool(deployment: RunnerDeployment, default_pool: str | None) -> str:
@@ -139,10 +114,12 @@ def main() -> None:
     names = [full_name(deployment) for deployment in found]
     states = asyncio.run(read_states(names))
 
-    if args.environment == "stg":
-        for deployment in found:
-            if full_name(deployment) not in states:
-                deployment.paused = True
+    for deployment in found:
+        state = states.get(full_name(deployment))
+        if state is not None:
+            preserve_state(deployment, state)
+        elif args.environment == "stg":
+            deployment.paused = True
 
     if args.image:
         print(f"이미지: {args.image}")
@@ -154,10 +131,6 @@ def main() -> None:
             work_pool_name=resolve_pool(deployment, args.pool), image=args.image
         )
         print(f"등록: {full_name(deployment)}")
-
-    restored = asyncio.run(restore_states(states))
-    for name in restored:
-        print(f"pause 상태 복원: {name}")
 
 
 if __name__ == "__main__":

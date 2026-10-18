@@ -442,7 +442,7 @@ UI에서 꺼둔 스케줄이 배포할 때마다 되살아납니다. Airflow에�
 마찬가지로 되살아납니다. 반면 Prefect 서버나 worker의 재시작은 정의를 건드리지
 않으므로 pause가 유지됩니다.
 
-`deploy.py`는 배포 전 `paused`와 각 스케줄의 `active`를 읽어두고 등록 후 되돌려 이
+`deploy.py`는 배포 전 `paused`와 각 스케줄의 `active`를 읽어두고 등록 payload 에 반영해 이
 문제를 막습니다. 반대로 UI에서 다시 켠 것을 배포가 도로 끄지도 않습니다.
 
 **따라서 운영 스케줄 등록은 반드시 `deploy.py`를 거쳐야 합니다.** `prefect deploy`나

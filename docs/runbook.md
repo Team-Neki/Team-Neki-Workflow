@@ -136,12 +136,20 @@ flow run 파드의 service account namespace 에서 읽습니다.
 1. PR에서 `ci` 워크플로가 통과했는지 봅니다. `make check`와 `make image`를 돌립니다
 2. merge 뒤 Actions 탭에서 `build` 워크플로가 끝나기를 기다립니다. "Resolve image tag" 단계 출력의 태그를 적어둡니다
 3. Team-Neki-GitOps main에 해당 환경의 `worker.yaml` 이미지 갱신 커밋이 생겼는지 봅니다
-4. ArgoCD가 동기화하면 worker가 롤링됩니다. initContainer 로그에 `이미지:` 줄과 deployment마다 `등록:` 줄이 보이면 등록이 끝난 것입니다. 꺼둔 스케줄이 있었다면 `pause 상태 복원:` 줄도 같이 나옵니다
-5. Prefect UI에서 deployment 하나를 열어 job variables의 `image`가 새 태그인지 봅니다. `hello/hello-local`을 한 번 실행해 Job 파드가 뜨고 완료되면 끝입니다
+4. ArgoCD가 동기화하면 worker가 롤링됩니다. initContainer 로그에 `이미지:` 줄과 deployment마다 `등록:` 줄이 보이면 등록이 끝난 것입니다. 기존 pause 와 스케줄 active 상태는 등록할 때 함께 반영됩니다
+5. Prefect UI에서 deployment 하나를 열어 job variables의 `image`가 새 태그인지 봅니다. stg 는 `hello/hello-local-stg`, prod 는 `hello/hello-local`을 한 번 실행해 Job 파드가 뜨고 완료되면 끝입니다
+
+검증·재시작·롤백 전에 대상을 선택합니다. main merge 의 대상은 stg 입니다.
+
+| 환경 | namespace | GitOps 경로 | hello deployment |
+|---|---|---|---|
+| stg | `prefect-stg` | `overlays/prefect-stg/worker.yaml` | `hello/hello-local-stg` |
+| prod | `prefect` | `overlays/prefect/worker.yaml` | `hello/hello-local` |
 
 ```bash
-kubectl -n prefect rollout status deploy/prefect-worker
-kubectl -n prefect logs deploy/prefect-worker --all-containers --tail=50
+WORKFLOW_NAMESPACE=prefect-stg # prod 는 prefect
+kubectl -n "$WORKFLOW_NAMESPACE" rollout status deploy/prefect-worker
+kubectl -n "$WORKFLOW_NAMESPACE" logs deploy/prefect-worker --all-containers --tail=50
 ```
 
 문서(`*.md`)만 바뀐 merge는 build.yml이 돌지 않습니다.
@@ -150,28 +158,38 @@ kubectl -n prefect logs deploy/prefect-worker --all-containers --tail=50
 
 ### 같은 커밋을 다시 밀기
 
-Actions 탭 > build > Run workflow (main). 같은 sha라 태그가 같고, 이미지는 덮어 쓰이며,
+Actions 탭 > build > Run workflow 에서 main 과 대상 environment 를 선택합니다.
+같은 sha라 태그가 같고, 이미지는 덮어 쓰이며,
 GitOps 쪽은 바뀐 것이 없어 `already at <태그>`로 끝납니다. worker는 재시작되지 않으므로
 deployment 등록도 갱신되지 않습니다. 등록만 다시 하고 싶다면 worker를 재시작합니다.
 
 ```bash
-kubectl -n prefect rollout restart deploy/prefect-worker
+WORKFLOW_NAMESPACE=prefect-stg # prod 는 prefect
+kubectl -n "$WORKFLOW_NAMESPACE" rollout restart deploy/prefect-worker
 ```
 
 ### 이전 이미지로 되돌리기
 
-GHCR에 이전 태그가 남아 있으므로 GitOps `worker.yaml`의 `image:` 줄들을 그 태그로 바꿔 커밋하면
-됩니다. initContainer와 worker 컨테이너 두 곳이므로 둘을 같이 바꿔야 합니다.
-Actions를 거치지 않습니다. 다음 merge가 다시 최신으로 덮으므로, 코드 자체를 되돌려야
-한다면 이 저장소에서 revert PR을 올리는 것이 맞습니다.
+GHCR에 남아 있는 이전 태그로 선택한 환경의 GitOps `worker.yaml` 을 수정합니다.
+initContainer 와 worker 두 이미지 참조를 함께 바꿉니다. stg 는 `--environment stg`
+지원을 포함한 이미지로만 되돌립니다. 그 이전 버전은 initContainer 가 실패합니다.
+
+stg 는 다음 main merge 가 최신 이미지로 덮습니다. prod 는 merge 만으로 바뀌지
+않습니다. 코드 자체를 되돌릴 때는 revert PR 을 병합하고, prod 는 별도로 main 을
+`environment=prod` 로 수동 배포합니다.
 
 ```bash
 cd Team-Neki-GitOps
-# macOS/Linux 공통. (GNU sed 만 있는 CI 와 달리 로컬 BSD sed 는 -i 인자 형식이 달라 perl 을 쓴다)
-perl -pi -e 's#^(\s*image: )ghcr.io/team-neki/team-neki-workflow:.*#${1}ghcr.io/team-neki/team-neki-workflow:0.1.0-a1b2c3d#' \
-  overlays/prefect/worker.yaml
-grep -n 'image: ghcr.io/team-neki/team-neki-workflow:' overlays/prefect/worker.yaml  # 두 줄 모두 새 태그인지 확인
-git commit -am "chore(prefect): rollback image to 0.1.0-a1b2c3d" && git push
+WORKFLOW_GITOPS_PATH=overlays/prefect-stg/worker.yaml # prod 는 overlays/prefect/worker.yaml
+# GHCR 에서 확인한 대상 환경의 이전 태그를 먼저 지정합니다.
+export WORKFLOW_ROLLBACK_TAG
+: "${WORKFLOW_ROLLBACK_TAG:?이전 이미지 태그를 지정하세요}"
+# macOS/Linux 공통. initContainer 와 worker 의 이미지 참조를 함께 바꿉니다.
+perl -pi -e 's#^(\s*image: )ghcr.io/team-neki/team-neki-workflow:.*#${1}ghcr.io/team-neki/team-neki-workflow:$ENV{WORKFLOW_ROLLBACK_TAG}#' "$WORKFLOW_GITOPS_PATH"
+git diff -- "$WORKFLOW_GITOPS_PATH" # 선택한 환경의 두 image 줄만 바뀌었는지 확인
+git add "$WORKFLOW_GITOPS_PATH"
+git commit -m "chore(prefect): rollback $WORKFLOW_GITOPS_PATH to $WORKFLOW_ROLLBACK_TAG"
+git push
 ```
 
 ### 브랜치를 머지 전에 올려 보기
