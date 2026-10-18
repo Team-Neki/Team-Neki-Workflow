@@ -27,7 +27,9 @@ Dockerfile                운영 이미지 - worker와 flow run이 같이 씀
 .github/workflows/        ci.yml (PR 검증), build.yml (main merge 시 이미지 푸시, GitOps 갱신)
 docs/spec/                수집 파이프라인 정책 (정본). 항목마다 구현 위치 anchor
 docs/runbook.md           배포 절차와 장애 대응
-AGENTS.md                 규약과 함정. 사람과 코딩 에이전트가 같이 읽음
+AGENTS.md                 공통 규칙과 작업별 문서 안내
+docs/hld/, docs/lld/       실행 모델과 구현 설계
+docs/runbook/             개발·검증 절차
 tests/                    순수 판정 테스트. make check 가 돌림
 ```
 

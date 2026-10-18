@@ -19,7 +19,8 @@ Postgres 에 남기는 데까지입니다. 뒤 단계 enrich 는 `docs/spec/enri
 지켜야 할 읽기 계약을 정합니다.
 
 다루지 않는 것은 법정동 코드와 지하철 역 마스터입니다. 별도 flow 이고 S3 를 거치지
-않으며, 규약은 `AGENTS.md` 에 있습니다.
+않으며, 규약은 `docs/lld/legal-dong.md` 와
+`docs/lld/subway-station.md` 에 있습니다.
 
 ## 세 단계와 경계
 
