@@ -31,7 +31,7 @@ def store(**overrides):
 
 def test_same_idx_in_different_platforms_are_distinct_and_names_remain_raw():
     rows, skipped = prepare(
-        [store(), store(platform="LIFE_FOUR_CUT")], cycle=CYCLE, min_expected=2
+        [store(), store(platform="LIFEFOURCUTS")], cycle=CYCLE, min_expected=2
     )
     assert len(rows) == 2
     assert rows[0].name == "포토이즘 강남점"
@@ -87,6 +87,19 @@ def test_input_floor_and_zero_valid_rows_fail():
         prepare([store()], cycle=CYCLE, min_expected=2)
     with pytest.raises(ValueError, match="적재 가능한"):
         prepare([store(address=None)], cycle=CYCLE, min_expected=1)
+
+
+def test_manual_rows_pass_but_do_not_count_toward_floor():
+    manual = store(idx="manual-1", source_type="MANUAL")
+    rows, _ = prepare([store(), manual], cycle=CYCLE, min_expected=1)
+    assert [row.source_type for row in rows] == ["COLLECTED", "MANUAL"]
+    with pytest.raises(ValueError, match="수집 지점"):
+        prepare([store(), manual], cycle=CYCLE, min_expected=2)
+
+
+def test_unknown_source_type_fails_before_writes():
+    with pytest.raises(ValueError, match="source_type"):
+        prepare([store(source_type="LEGACY")], cycle=CYCLE, min_expected=1)
 
 
 @pytest.mark.parametrize("minimum", [0, -1, True, 1.5])

@@ -2,6 +2,7 @@
 
 STORES_SYNC_TEST_DATABASE_URL을 명시해야 실행한다. 앱 DATABASE_URL은 읽지 않는다.
 서버 checkout이 형제 디렉토리에 없으면 STORES_SYNC_MIGRATION_FILE로 V34를 지정한다.
+V36은 V34와 같은 디렉토리에서 찾는다.
 """
 
 import os
@@ -49,7 +50,7 @@ def db():
             )
             connection.execute("""
                 CREATE TABLE tb_brand (
-                    id BIGSERIAL PRIMARY KEY, platform VARCHAR(32), deleted_at TIMESTAMP
+                    id BIGSERIAL PRIMARY KEY, code VARCHAR(30), deleted_at TIMESTAMP
                 );
                 CREATE TABLE tb_photo_booth_location (
                     id BIGSERIAL PRIMARY KEY, map_id VARCHAR(100) NOT NULL,
@@ -60,20 +61,23 @@ def db():
                 );
                 CREATE TABLE tb_photo_booth_enriched (
                     platform VARCHAR(32), idx VARCHAR(64), name VARCHAR(255), address VARCHAR(255),
-                    longitude DOUBLE PRECISION, latitude DOUBLE PRECISION,
-                    source_dt DATE, collected_at TIMESTAMP, b_code CHAR(10)
+                    location geometry(Point, 4326),
+                    source_dt DATE, collected_at TIMESTAMP, b_code CHAR(10),
+                    source_type VARCHAR(16) NOT NULL DEFAULT 'COLLECTED'
                 );
-                INSERT INTO tb_brand(platform) VALUES ('PHOTOISM');
+                INSERT INTO tb_brand(code) VALUES ('PHOTOISM');
                 INSERT INTO tb_photo_booth_location (
                     map_id, brand_id, branch_name, address, location, created_at, updated_at
                 ) VALUES ('kakao-old', 1, '기존 지점', '기존 주소', ST_SetSRID(ST_MakePoint(127, 37), 4326),
                     '2026-09-01', '2026-09-01');
             """)
             connection.execute(migration.read_text())
+            # 관리자 등록 지점의 원천 키를 허용하는 제약 (V34 와 같은 디렉토리)
+            connection.execute(next(migration.parent.glob("V36__*.sql")).read_text())
             connection.execute("""
                 INSERT INTO tb_photo_booth_enriched VALUES
                     ('PHOTOISM', 'official-1', '포토이즘 강남점', '서울 강남구 역삼동 1',
-                     127.03, 37.5, '2026-09-27', '2026-09-27 04:00', '1168010100');
+                     'SRID=4326;POINT(127.03 37.5)', '2026-09-27', '2026-09-27 04:00', '1168010100');
             """)
             yield connection
         finally:
@@ -150,6 +154,59 @@ def test_overrides_hidden_and_manual_rows_survive_sync(db):
     )
 
 
+def manual(db):
+    return db.execute("""
+        SELECT id, source_type, source_platform, source_idx, branch_name, map_id
+        FROM tb_photo_booth_location WHERE source_idx = 'manual-1'
+    """).fetchone()
+
+
+def test_manual_enriched_rows_sync_as_manual_with_source_key(db):
+    db.execute("""INSERT INTO tb_photo_booth_enriched
+        SELECT platform, 'manual-1', '관리자 지점', address, location,
+            source_dt, collected_at, b_code, 'MANUAL' FROM tb_photo_booth_enriched""")
+    assert run(db)["inserted"] == 2
+    first = manual(db)
+    assert first[1:] == ("MANUAL", "PHOTOISM", "manual-1", "관리자 지점", "source:PHOTOISM:manual-1")
+
+    db.execute("""
+        UPDATE tb_photo_booth_location SET override_branch_name='보정 이름'
+            WHERE source_idx='manual-1';
+        UPDATE tb_photo_booth_enriched SET name='관리자 수정', collected_at='2026-09-27 05:00'
+            WHERE idx='manual-1';
+    """)
+    assert run(db)["updated"] == 2
+    second = manual(db)
+    assert second[0] == first[0]
+    assert second[4] == "보정 이름"
+    assert db.execute(
+        "SELECT source_name FROM tb_photo_booth_location WHERE source_idx='manual-1'"
+    ).fetchone() == ("관리자 수정",)
+
+
+def test_enriched_before_location_fails_with_guidance_before_writes(db):
+    db.execute("ALTER TABLE tb_photo_booth_enriched DROP COLUMN location")
+    with pytest.raises(RuntimeError, match="location 열이 없습니다. BACKEND-244 뒤 stores-enrich"):
+        run(db)
+    assert collected(db) is None
+
+
+def test_missing_enriched_table_fails_with_guidance(db):
+    db.execute("DROP TABLE tb_photo_booth_enriched")
+    with pytest.raises(RuntimeError, match="stores-enrich 를 먼저 실행하세요"):
+        run(db)
+
+
+def test_missing_manual_key_constraint_fails_before_writes(db):
+    db.execute("""
+        ALTER TABLE tb_photo_booth_location
+            RENAME CONSTRAINT ck_photo_booth_location_source_keyed TO ck_photo_booth_location_source
+    """)
+    with pytest.raises(RuntimeError, match="V36"):
+        run(db)
+    assert collected(db) is None
+
+
 def test_older_input_does_not_replace_newer_source(db):
     run(db)
     before = collected(db)
@@ -167,7 +224,7 @@ def test_dry_run_is_read_only_and_predicts_inserts(db):
 
 def test_missing_brand_fails_without_partial_writes(db):
     db.execute("""INSERT INTO tb_photo_booth_enriched
-        SELECT 'LIFE_FOUR_CUT', '1', name, address, longitude, latitude, source_dt, collected_at, b_code
+        SELECT 'LIFEFOURCUTS', '1', name, address, location, source_dt, collected_at, b_code
         FROM tb_photo_booth_enriched""")
     with pytest.raises(ValueError, match="매핑 누락"):
         run(db)
@@ -176,7 +233,7 @@ def test_missing_brand_fails_without_partial_writes(db):
 
 def test_write_error_rolls_back_prior_insert(db):
     db.execute("""INSERT INTO tb_photo_booth_enriched
-        SELECT platform, 'official-2', '거부 지점', address, longitude, latitude,
+        SELECT platform, 'official-2', '거부 지점', address, location,
             source_dt, collected_at, b_code FROM tb_photo_booth_enriched;
         ALTER TABLE tb_photo_booth_location ADD CONSTRAINT reject_fixture CHECK (branch_name != '거부 지점');""")
     with pytest.raises(psycopg.errors.CheckViolation):

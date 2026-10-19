@@ -11,6 +11,7 @@ from flows.common.postgres import connect
 from flows.stores_sync.records import SourceStore, prepare
 
 TABLE = "tb_photo_booth_location"
+ENRICHED_TABLE = "tb_photo_booth_enriched"
 MIN_EXPECTED = 800
 SYNC_LOCK = 0x6E656B69_153
 REQUIRED_COLUMNS = {
@@ -31,6 +32,13 @@ REQUIRED_COLUMNS = {
     "admin_hidden",
 }
 
+# enriched 는 enrich 가 매 실행 새로 만든다. 열이 생기는 것은 그 변경을 담은 enrich 가
+# 한 번 돈 뒤다. 열 -> 그 열을 만든 변경
+REQUIRED_ENRICHED_COLUMNS = {
+    "source_type": "BACKEND-222",
+    "location": "BACKEND-244",
+}
+
 # override는 DB가 행 잠금을 획득한 뒤 현재 값으로 읽는다. Python에서 미리 읽어
 # 새 수집 값과 합치면 동시 어드민 수정이 유실될 수 있다.
 UPSERT = """
@@ -41,7 +49,7 @@ INSERT INTO tb_photo_booth_location AS current (
 ) VALUES (
     %(map_id)s, %(brand_id)s, %(name)s, %(address)s,
     ST_SetSRID(ST_MakePoint(%(longitude)s, %(latitude)s), 4326), %(now)s, %(now)s,
-    'COLLECTED', %(platform)s, %(idx)s, %(name)s, %(address)s,
+    %(source_type)s, %(platform)s, %(idx)s, %(name)s, %(address)s,
     ST_SetSRID(ST_MakePoint(%(longitude)s, %(latitude)s), 4326),
     %(b_code)s, %(source_dt)s, %(collected_at)s, %(b_code)s
 )
@@ -62,7 +70,7 @@ ON CONFLICT (source_platform, source_idx) DO UPDATE SET
         ELSE EXCLUDED.source_b_code
     END,
     updated_at = EXCLUDED.updated_at
-WHERE current.source_type = 'COLLECTED'
+WHERE current.source_type = EXCLUDED.source_type
     AND (current.source_dt, current.source_collected_at)
         <= (EXCLUDED.source_dt, EXCLUDED.source_collected_at)
 RETURNING id
@@ -88,6 +96,35 @@ def require_schema(cursor) -> None:
     )
     if cursor.fetchone() is None:
         raise RuntimeError("서버 Flyway V34의 원천 키 유일성 제약이 없습니다.")
+    # V34 제약은 MANUAL 에 원천 키를 허용하지 않는다. V36 전이면 관리자 지점 INSERT 가 실패한다
+    cursor.execute(
+        "SELECT 1 FROM pg_constraint WHERE conrelid = to_regclass(%s) "
+        "AND conname = 'ck_photo_booth_location_source_keyed' AND contype = 'c'",
+        (TABLE,),
+    )
+    if cursor.fetchone() is None:
+        raise RuntimeError(
+            "서버 Flyway V36을 먼저 적용해야 합니다. 관리자 등록 지점의 원천 키를 허용하는 제약이 없습니다."
+        )
+
+
+def require_enriched(cursor) -> None:
+    """읽을 enriched 열이 없으면 원문 SQL 오류 대신 무엇을 먼저 할지 알려 주고 멈춘다."""
+    cursor.execute(
+        "SELECT attname FROM pg_attribute WHERE attrelid = to_regclass(%s) "
+        "AND attnum > 0 AND NOT attisdropped",
+        (ENRICHED_TABLE,),
+    )
+    present = {r["attname"] for r in cursor.fetchall()}
+    if not present:
+        raise RuntimeError(f"{ENRICHED_TABLE} 이 없습니다. stores-enrich 를 먼저 실행하세요.")
+    missing = sorted(set(REQUIRED_ENRICHED_COLUMNS) - present)
+    if missing:
+        raise RuntimeError(
+            f"{ENRICHED_TABLE} 에 {', '.join(missing)} 열이 없습니다. "
+            + ", ".join(sorted({REQUIRED_ENRICHED_COLUMNS[c] for c in missing}))
+            + " 뒤 stores-enrich 를 한 번 실행한 다음 다시 실행하세요."
+        )
 
 
 def synchronize(
@@ -105,14 +142,18 @@ def synchronize(
                     "다른 지점 동기화가 실행 중입니다. 완료 후 다시 실행하세요."
                 )
         require_schema(cursor)
+        require_enriched(cursor)
+        # 관리자 등록 지점(MANUAL)도 (platform, manual-<id>) 원천 키로 함께 동기화한다
         cursor.execute(
-            "SELECT platform, idx, name, address, longitude, latitude, source_dt, "
-            "collected_at, b_code FROM tb_photo_booth_enriched ORDER BY platform, idx"
+            "SELECT platform, idx, name, address, ST_X(location) AS longitude, "
+            "ST_Y(location) AS latitude, source_dt, "
+            "collected_at, b_code, source_type FROM tb_photo_booth_enriched "
+            "ORDER BY platform, idx"
         )
         stores = [SourceStore(**row) for row in cursor.fetchall()]
         ready, skipped = prepare(stores, cycle=cycle, min_expected=min_expected)
         cursor.execute(
-            "SELECT id, platform FROM tb_brand WHERE deleted_at IS NULL AND platform IS NOT NULL"
+            "SELECT id, code AS platform FROM tb_brand WHERE deleted_at IS NULL"
         )
         brands: dict[str, int] = {}
         for brand in cursor.fetchall():
@@ -122,12 +163,12 @@ def synchronize(
         missing_brands = {s.platform for s in ready} - brands.keys()
         if missing_brands:
             raise ValueError(
-                "tb_brand.platform 매핑 누락: " + ", ".join(sorted(missing_brands))
+                "tb_brand.code 매핑 누락: " + ", ".join(sorted(missing_brands))
             )
 
         cursor.execute(
             "SELECT source_platform, source_idx, source_dt, source_collected_at "
-            "FROM tb_photo_booth_location WHERE source_type = 'COLLECTED'"
+            "FROM tb_photo_booth_location WHERE source_platform IS NOT NULL"
         )
         versions = {
             (row["source_platform"], row["source_idx"]): (
@@ -148,6 +189,7 @@ def synchronize(
                     UPSERT,
                     {
                         "map_id": f"source:{row.platform}:{row.idx}",
+                        "source_type": row.source_type,
                         "brand_id": brands[row.platform],
                         "platform": row.platform,
                         "idx": row.idx,

@@ -7,6 +7,8 @@ from datetime import date, datetime
 
 from flows.common.platform import Platform
 
+SOURCE_TYPES = ("COLLECTED", "MANUAL")
+
 
 @dataclass(frozen=True)
 class SourceStore:
@@ -19,6 +21,8 @@ class SourceStore:
     source_dt: date
     collected_at: datetime
     b_code: str | None
+    # COLLECTED 수집 지점 / MANUAL 관리자 등록 지점 (enrich 가 tb_photo_booth_manual 에서 담음)
+    source_type: str = "COLLECTED"
 
     @property
     def key(self) -> tuple[str, str]:
@@ -39,7 +43,15 @@ def prepare(
     skipped: Counter[str] = Counter()
     eligible: list[SourceStore] = []
     for row in stores:
-        if row.platform not in Platform or not row.idx.strip() or len(row.idx) > 64:
+        if row.source_type not in SOURCE_TYPES:
+            raise ValueError(f"잘못된 source_type: {row.key} {row.source_type}")
+        # 관리자 등록 지점은 수집하지 않는 브랜드일 수 있어 Platform 대신 tb_brand.code 로 검사한다
+        if (
+            not row.platform
+            or (row.source_type == "COLLECTED" and row.platform not in Platform)
+            or not row.idx.strip()
+            or len(row.idx) > 64
+        ):
             raise ValueError(f"잘못된 원천 키: {row.key}")
         if row.key in seen:
             raise ValueError(f"중복 원천 키: {row.key}")
@@ -59,9 +71,11 @@ def prepare(
             skipped["future_cycle"] += 1
         else:
             eligible.append(row)
-    if len(eligible) < min_expected:
+    # 하한은 수집 지점만 센다. 관리자 등록 지점이 수집 장애를 가리면 안 된다 (enrich 와 같은 기준)
+    collected = sum(1 for row in eligible if row.source_type == "COLLECTED")
+    if collected < min_expected:
         raise ValueError(
-            f"동기화 입력 {len(eligible)}건이 하한 {min_expected}건 미만입니다."
+            f"동기화 입력(수집 지점) {collected}건이 하한 {min_expected}건 미만입니다."
         )
 
     ready: list[SourceStore] = []

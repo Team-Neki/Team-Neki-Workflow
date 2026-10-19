@@ -20,18 +20,27 @@ sequenceDiagram
     participant API as Prefect 서버
 
     Dev->>GH: PR (ci.yml)
-    Dev->>GH: main merge (build.yml)
-    GH->>GHCR: push :<version>-<sha7>, :main
-    GH->>GitOps: overlays/prefect/worker.yaml image 태그 커밋
+    Dev->>GH: main merge (stg) 또는 수동 실행 (stg/prod)
+    GH->>GHCR: push :<version>-<sha7>, :stg 또는 :prod
+    GH->>GitOps: 선택한 환경의 worker.yaml image 태그 커밋
     Argo->>GitOps: main 폴링
     Argo->>Worker: worker Deployment 롤링
     Worker->>API: initContainer가 python deploy.py 실행 (등록 갱신, pause 보존)
     API-->>Worker: 다음 flow run부터 새 이미지
 ```
 
-한 번 merge하면 다음 flow run부터 새 코드가 돕니다. 이미 실행 중인 flow run은 예전
+main 에 merge하면 staging 의 다음 flow run부터 새 코드가 돕니다. 이미 실행 중인 flow run은 예전
 이미지로 끝까지 갑니다. 태그는 `<pyproject version>-<git sha 7자리>`이며 `main` 태그도
 같은 이미지를 가리킵니다.
+
+Prefect 서버와 UI 는 공통입니다. `main` push 는 staging (`prefect-stg` 네임스페이스,
+`neki-stg-pool`), Actions 수동 실행에서 `environment=prod` 는 prod
+(`prefect` 네임스페이스, `neki-pool`) worker 를 갱신합니다. 수동 실행의 기본 선택은
+`stg` 입니다. stg deployment
+이름에는 `-stg` 가 붙습니다. `:prod`/`:stg` 별칭도 푸시하지만 GitOps 는 불변
+version-SHA 태그를 사용합니다.
+새 stg deployment 는 처음 등록할 때 pause 상태로 생성됩니다. 수동 실행과 데이터
+접속을 확인한 뒤 필요한 스케줄만 UI 에서 켭니다. 이후 배포는 그 상태를 보존합니다.
 
 ## 처음 한 번만 하는 것
 
@@ -113,17 +122,54 @@ docker pull ghcr.io/team-neki/team-neki-workflow:main
 - initContainer env : `PREFECT_API_URL`, `PREFECT_WORK_POOL=neki-pool`
 - k8s Secret `prefect-workflow` (`workflow-secret.yaml`, gitignore) : `KAKAO_API_KEY`, `DATABASE_URL`. `worker-base-job-template.json`의 `envFrom`이 이 Secret을 flow run Job 파드에 넣음. **worker.yaml에 env를 넣어도 flow에는 전달되지 않음**. Secret이 없으면 모든 flow run이 `CreateContainerConfigError`로 뜨지 않음
 
+staging 에는 별도의 `prefect-stg` 네임스페이스와 같은 이름의 `prefect-workflow`
+Secret 이 필요합니다. `DATABASE_URL` 은 `dev_yapp`, `S3_BUCKET` 은 기존
+`staging-team-neki-workflow` 를 가리키고 Batch 용 `SPRING_PROFILES_ACTIVE=staging` 과
+staging API 의 `JASYPT_PASSWORD` 를 넣습니다. prod Secret 은 운영 앱 DB 와
+`prod-team-neki-workflow` 여야 합니다. **기존 Secret 의 실제 값이 staging 일 수도
+있으므로 확인 후 prod worker 를 운영 경로로 취급해야 합니다.** 각 네임스페이스의
+`neki-images` ConfigMap 이 Batch 이미지를 전달하고, Batch Job 의 네임스페이스는
+flow run 파드의 service account namespace 에서 읽습니다.
+
+### staging 최초 활성화와 두 PR 선행 머지
+
+GitOps #37 → Workflow #34 순서로 먼저 병합할 수 있습니다. Workflow main push의
+build가 GitOps staging 이미지 두 참조를 갱신하지만, GitOps의 초기 `replicas: 0`은
+유지하므로 이 단계에서는 worker와 deployment가 생성되지 않습니다.
+
+1. GitOps #37 병합 후 Workflow #34를 병합하고 자동 build 성공과 staging 이미지
+   갱신을 확인합니다.
+2. 최신 GitOps main에서 `overlays/prefect-stg/namespace.yaml`을 먼저 적용한 뒤
+   staging `prefect-workflow` Secret을 적용합니다.
+3. GitOps staging worker의 `replicas: 1` 변경을 main에 반영하고
+   `argocd/apps/prefect-stg.yaml`을 적용합니다. 기존 Application은 자동 동기화합니다.
+4. worker가 뜬 뒤 `hello/hello-local-stg`로 확인합니다. 필요한 스케줄만 켭니다.
+
+Server #351은 Batch 이미지 배포 액션의 환경 선택 변경이므로 위 두 PR의 선행
+머지에는 필요하지 않습니다. 검색 색인을 실행하기 전에는 staging `images.env`의
+Batch 이미지와 Secret의 profile/DB 대상을 확인합니다. #351을 나중에 반영한 뒤
+`environment=stg`로 Batch를 수동 배포할 수 있습니다. 그 전의 기존 Batch 배포
+액션은 `overlays/prefect/images.env`를 갱신하므로 staging용으로 실행하지 않습니다.
+
 ## merge할 때 확인하는 것
 
 1. PR에서 `ci` 워크플로가 통과했는지 봅니다. `make check`와 `make image`를 돌립니다
 2. merge 뒤 Actions 탭에서 `build` 워크플로가 끝나기를 기다립니다. "Resolve image tag" 단계 출력의 태그를 적어둡니다
-3. Team-Neki-GitOps main에 `chore(prefect): update image to <태그>` 커밋이 생겼는지 봅니다
-4. ArgoCD가 동기화하면 worker가 롤링됩니다. initContainer 로그에 `이미지:` 줄과 deployment마다 `등록:` 줄이 보이면 등록이 끝난 것입니다. 꺼둔 스케줄이 있었다면 `pause 상태 복원:` 줄도 같이 나옵니다
-5. Prefect UI에서 deployment 하나를 열어 job variables의 `image`가 새 태그인지 봅니다. `hello/hello-local`을 한 번 실행해 Job 파드가 뜨고 완료되면 끝입니다
+3. Team-Neki-GitOps main에 해당 환경의 `worker.yaml` 이미지 갱신 커밋이 생겼는지 봅니다
+4. 최초 설치에서는 위 활성화 절차를 먼저 마칩니다. 활성화된 worker는 ArgoCD가 동기화하면 롤링됩니다. initContainer 로그에 `이미지:` 줄과 deployment마다 `등록:` 줄이 보이면 등록이 끝난 것입니다. 기존 pause 와 스케줄 active 상태는 등록할 때 함께 반영됩니다
+5. Prefect UI에서 deployment 하나를 열어 job variables의 `image`가 새 태그인지 봅니다. stg 는 `hello/hello-local-stg`, prod 는 `hello/hello-local`을 한 번 실행해 Job 파드가 뜨고 완료되면 끝입니다
+
+검증·재시작·롤백 전에 대상을 선택합니다. main merge 의 대상은 stg 입니다.
+
+| 환경 | namespace | GitOps 경로 | hello deployment |
+|---|---|---|---|
+| stg | `prefect-stg` | `overlays/prefect-stg/worker.yaml` | `hello/hello-local-stg` |
+| prod | `prefect` | `overlays/prefect/worker.yaml` | `hello/hello-local` |
 
 ```bash
-kubectl -n prefect rollout status deploy/prefect-worker
-kubectl -n prefect logs deploy/prefect-worker --all-containers --tail=50
+WORKFLOW_NAMESPACE=prefect-stg # prod 는 prefect
+kubectl -n "$WORKFLOW_NAMESPACE" rollout status deploy/prefect-worker
+kubectl -n "$WORKFLOW_NAMESPACE" logs deploy/prefect-worker --all-containers --tail=50
 ```
 
 문서(`*.md`)만 바뀐 merge는 build.yml이 돌지 않습니다.
@@ -132,44 +178,57 @@ kubectl -n prefect logs deploy/prefect-worker --all-containers --tail=50
 
 ### 같은 커밋을 다시 밀기
 
-Actions 탭 > build > Run workflow (main). 같은 sha라 태그가 같고, 이미지는 덮어 쓰이며,
+Actions 탭 > build > Run workflow 에서 main 과 대상 environment 를 선택합니다.
+같은 sha라 태그가 같고, 이미지는 덮어 쓰이며,
 GitOps 쪽은 바뀐 것이 없어 `already at <태그>`로 끝납니다. worker는 재시작되지 않으므로
 deployment 등록도 갱신되지 않습니다. 등록만 다시 하고 싶다면 worker를 재시작합니다.
 
 ```bash
-kubectl -n prefect rollout restart deploy/prefect-worker
+WORKFLOW_NAMESPACE=prefect-stg # prod 는 prefect
+kubectl -n "$WORKFLOW_NAMESPACE" rollout restart deploy/prefect-worker
 ```
 
 ### 이전 이미지로 되돌리기
 
-GHCR에 이전 태그가 남아 있으므로 GitOps `worker.yaml`의 `image:` 줄들을 그 태그로 바꿔 커밋하면
-됩니다. initContainer와 worker 컨테이너 두 곳이므로 둘을 같이 바꿔야 합니다.
-Actions를 거치지 않습니다. 다음 merge가 다시 최신으로 덮으므로, 코드 자체를 되돌려야
-한다면 이 저장소에서 revert PR을 올리는 것이 맞습니다.
+GHCR에 남아 있는 이전 태그로 선택한 환경의 GitOps `worker.yaml` 을 수정합니다.
+initContainer 와 worker 두 이미지 참조를 함께 바꿉니다. stg 는 `--environment stg`
+지원을 포함한 이미지로만 되돌립니다. 그 이전 버전은 initContainer 가 실패합니다.
+
+stg 는 다음 main merge 가 최신 이미지로 덮습니다. prod 는 merge 만으로 바뀌지
+않습니다. 코드 자체를 되돌릴 때는 revert PR 을 병합하고, prod 는 별도로 main 을
+`environment=prod` 로 수동 배포합니다.
 
 ```bash
 cd Team-Neki-GitOps
-# macOS/Linux 공통. (GNU sed 만 있는 CI 와 달리 로컬 BSD sed 는 -i 인자 형식이 달라 perl 을 쓴다)
-perl -pi -e 's#^(\s*image: )ghcr.io/team-neki/team-neki-workflow:.*#${1}ghcr.io/team-neki/team-neki-workflow:0.1.0-a1b2c3d#' \
-  overlays/prefect/worker.yaml
-grep -n 'image: ghcr.io/team-neki/team-neki-workflow:' overlays/prefect/worker.yaml  # 두 줄 모두 새 태그인지 확인
-git commit -am "chore(prefect): rollback image to 0.1.0-a1b2c3d" && git push
+WORKFLOW_GITOPS_PATH=overlays/prefect-stg/worker.yaml # prod 는 overlays/prefect/worker.yaml
+# GHCR 에서 확인한 대상 환경의 이전 태그를 먼저 지정합니다.
+export WORKFLOW_ROLLBACK_TAG
+: "${WORKFLOW_ROLLBACK_TAG:?이전 이미지 태그를 지정하세요}"
+# macOS/Linux 공통. initContainer 와 worker 의 이미지 참조를 함께 바꿉니다.
+perl -pi -e 's#^(\s*image: )ghcr.io/team-neki/team-neki-workflow:.*#${1}ghcr.io/team-neki/team-neki-workflow:$ENV{WORKFLOW_ROLLBACK_TAG}#' "$WORKFLOW_GITOPS_PATH"
+git diff -- "$WORKFLOW_GITOPS_PATH" # 선택한 환경의 두 image 줄만 바뀌었는지 확인
+git add "$WORKFLOW_GITOPS_PATH"
+git commit -m "chore(prefect): rollback $WORKFLOW_GITOPS_PATH to $WORKFLOW_ROLLBACK_TAG"
+git push
 ```
 
 ### 브랜치를 머지 전에 올려 보기
 
 PR 을 머지하기 전에 그 브랜치 코드로 flow 를 실제 클러스터에서 한 번 돌려 보고 싶을 때
-씁니다. Actions 탭 > build > Run workflow 에서 두 방법 중 하나를 씁니다.
+씁니다. Actions 탭 > build > Run workflow 에서 `environment=stg` 를 선택하고
+두 방법 중 하나를 씁니다.
 
 ```text
 # 1) main 의 build.yml 로 다른 브랜치를 빌드. 그 브랜치에 build.yml 이 없어도 된다
 Run workflow
   Use workflow from : main
+  environment       : stg
   ref               : feature/BACKEND-103-flow-postgres
 
 # 2) 그 브랜치의 build.yml 로 그 브랜치를 빌드. ref 는 비워 둔다
 Run workflow
   Use workflow from : feature/BACKEND-103-flow-postgres
+  environment       : stg
   ref               : (비움)
 ```
 
@@ -177,20 +236,25 @@ Run workflow
 main 에 아직 없다면 2) 로 갑니다.
 
 일어나는 일은 main merge 와 같습니다. 이미지가 `<그 브랜치 pyproject version>-<sha7>` 로
-올라가고, GitOps `worker.yaml` 의 태그가 바뀌어 worker 가 롤링되고, initContainer 가
+올라가고, GitOps `overlays/prefect-stg/worker.yaml` 의 태그가 바뀌어 worker 가 롤링되고, initContainer 가
 그 브랜치의 `deployments/` 를 등록합니다. 다른 점은 둘입니다.
 
 - `:main` 태그는 옮기지 않습니다. `:main` 은 main 이 가리키는 이미지라는 뜻을 유지합니다
 - GitOps 커밋 메시지에 `(from <브랜치>, 머지 전 테스트 배포)` 가 붙어 이력에서 구분됩니다
 
-**Prefect 환경은 하나입니다.** 브랜치를 올리면 그 시간 동안 운영 worker 가 그 브랜치
-코드로 돕니다. main 에만 있는 deployment 는 서버에 남아 있지만 job image 는 이전 태그를
-유지하므로, 브랜치가 main 보다 뒤처져 있으면 그 사이 main 의 수정은 반영되지 않습니다.
-확인이 끝나면 `ref` 를 비우고 다시 실행해 main 으로 되돌립니다. 다음 main merge 가
-있어도 되돌아갑니다.
+수동 실행에서는 `environment=stg` 를 선택합니다. 브랜치 코드는 stg worker 와
+`-stg` deployment 에만 등록되고 prod worker 의 이미지는 그대로입니다. 확인이 끝나면
+stg 에 main 을 다시 배포할 수 있습니다. `environment=prod` 에는 main 만 배포할 수
+있습니다.
 
 `ci.yml` 은 `pull_request` 에만 돌므로 이 경로로는 `make check` 가 실행되지 않습니다.
 PR 의 ci 가 초록인 브랜치만 올리세요.
+
+### 운영에 배포하기
+
+main merge 는 staging 만 갱신합니다. staging 에서 확인한 뒤 Actions 탭 > build >
+Run workflow 에서 `Use workflow from=main`, `environment=prod`, `ref` 는 비워 둔 채
+실행합니다. prod 배포는 수동 실행에서만 허용됩니다.
 
 ### 클러스터 밖에서 직접 등록하기
 
@@ -201,6 +265,7 @@ initContainer를 기다리지 않고 지금 등록을 갱신하려면 터널을 
 ```bash
 kubectl -n prefect port-forward svc/prefect-server 4200:4200
 WORKFLOW_IMAGE=ghcr.io/team-neki/team-neki-workflow:main make deploy WORK_POOL=neki-pool
+PREFECT_ENVIRONMENT=stg WORKFLOW_IMAGE=ghcr.io/team-neki/team-neki-workflow:stg make deploy WORK_POOL=neki-stg-pool
 ```
 
 ### 스케줄을 잠시 끄기

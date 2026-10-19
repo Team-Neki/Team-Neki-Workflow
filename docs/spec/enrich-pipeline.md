@@ -32,8 +32,8 @@
 - `collected_at` 은 CSV 의 시간대 붙은 ISO 문자열을 KST 벽시계로 바꾸고 시간대를 뗌
 
 구현 : `deployments/stores_enrich.py:25` `schedule=Cron(`,
-`flows/stores_enrich/flow.py:45` `def _read_inputs`,
-`flows/stores_enrich/region.py:83` `def from_collect`
+`flows/stores_enrich/flow.py:56` `def _read_inputs`,
+`flows/stores_enrich/region.py:91` `def from_collect`
 
 ## 판정
 
@@ -58,10 +58,10 @@
 - task 는 하나. 지점마다 task 를 만들지 않음. 쓰레드 안에서 로그를 남기지 않음
 
 구현 : `flows/common/kakao.py:111` `def coord2regioncode`,
-`flows/stores_enrich/region.py:117` `def reusable`,
-`flows/stores_enrich/region.py:150` `def resolve`,
-`flows/stores_enrich/region.py:269` `def enrich_stores`,
-`flows/stores_enrich/region.py:41` `WORKERS`
+`flows/stores_enrich/region.py:157` `def reusable`,
+`flows/stores_enrich/region.py:190` `def resolve`,
+`flows/stores_enrich/region.py:309` `def enrich_stores`,
+`flows/stores_enrich/region.py:45` `WORKERS`
 
 ## 주소는 해석하지 않는다
 
@@ -81,8 +81,8 @@
 코드는 맞으므로 경고만 보고 넘어가면 됩니다. `reused` 행은 처음 판정될 때 이미
 경고했으므로 매일 되풀이하지 않습니다.
 
-구현 : `flows/stores_enrich/region.py:239` `def mismatched`,
-`flows/stores_enrich/table.py:32` `LEGAL_DONG_TABLE`
+구현 : `flows/stores_enrich/region.py:279` `def mismatched`,
+`flows/stores_enrich/table.py:45` `LEGAL_DONG_TABLE`
 
 ## 이름은 앞머리 브랜드 표기만 통일한다
 
@@ -97,7 +97,30 @@
 - 브랜드와 지점명을 나누는 검색용 정규화는 여전히 서버 `SearchNormalizer` 몫
 
 구현 : `flows/stores_enrich/name.py:16` `PREFIX_ALIASES`,
-`flows/stores_enrich/region.py:100` `unify_brand(`
+`flows/stores_enrich/region.py:108` `unify_brand(`
+
+## 관리자 등록 지점도 함께 담는다
+
+수집 경로에 없는 지점은 관리자가 서버의 `tb_photo_booth_manual` 에 넣습니다. enrich 는
+매 실행 이 테이블을 전량 읽어 수집 지점과 같은 판정(재사용 또는 Kakao)을 거쳐 함께
+담습니다. 테이블 스키마는 Team-Neki-Server Flyway(`V35__create_photo_booth_manual_table.sql`)가
+소유하고 enrich 는 읽기만 합니다. BACKEND-222 작업입니다.
+
+- `deleted_at` 이 NULL 이고 브랜드가 삭제되지 않은 행만 읽음
+- `platform` 은 브랜드의 `tb_brand.code`. 서버 색인이 그 값으로 브랜드를 찾음.
+  수집하지 않는 브랜드의 지점도 담음 (BACKEND-228 전에는 `tb_brand.platform` 이 없는 브랜드를 뺐음)
+- `idx` 는 `manual-<id>`. 사이트 idx 와 겹치지 않게 접두를 붙임. 겹치면 수집 지점을 남김
+- `source_type` 은 수집 지점 `COLLECTED`, 관리자 등록 지점 `MANUAL`. 지점 마스터와 같은 어휘
+- `source_dt` 는 이번 사이클, `collected_at` 은 관리자가 마지막으로 고친 시각(`updated_at`),
+  `coordinate_source` 는 `manual`
+- 이름은 수집 지점과 같이 앞머리 브랜드 표기만 통일함
+- 하한(800)은 수집 지점만 셈. 관리자 등록 지점이 수집 장애를 가리지 않게 함
+- 테이블이 없으면(서버 마이그레이션 전) 경고 후 수집 지점만으로 진행함
+
+구현 : `flows/stores_enrich/table.py:191` `def read_manual`,
+`flows/stores_enrich/region.py:126` `def from_manual`,
+`flows/stores_enrich/region.py:41` `MANUAL_IDX_PREFIX`,
+`flows/stores_enrich/flow.py:99` `def _read_manual`
 
 ## enrich 결과는 Postgres 에만 저장한다
 
@@ -106,7 +129,7 @@ collect 원본 CSV 는 계속 S3 에서 읽지만 enrich 결과는 S3 에 쓰지
 없습니다. 기존 S3 enrich 객체는 삭제하지 않습니다. COPY 열 순서는
 `EnrichedStore` 필드 순서가 정본입니다.
 
-구현 : `flows/stores_enrich/region.py:77` `COLUMNS = tuple(`
+구현 : `flows/stores_enrich/region.py:85` `COLUMNS = tuple(`
 
 ## 산출물 : Postgres `tb_photo_booth_enriched`
 
@@ -116,18 +139,30 @@ index 가 읽는 현재 세대입니다. 세대 교체는 `tb_legal_dong` 과 �
 같은 날 다시 돌리면 인덱스 이름이 현재 세대와 부딪혀 `1` 이 붙었다 다음 실행에
 돌아오며, `2` 이상으로 올라가면 `_prev` 정리가 빠진 것입니다.
 
-- 하한 800 미만이면 바꿔치우지 않고 예외. 브랜드 하나가 빠지는 것은 막지 않고
-  거의 빈 테이블만 막음
-- index 와의 계약은 `platform`, `idx`, `name`, `address`, `longitude`, `latitude`,
-  `source_dt`, `b_code` 여덟 열. `b_code` 가 NULL 인 행도 남김
+- 수집 지점이 하한 800 미만이면 바꿔치우지 않고 예외. 브랜드 하나가 빠지는 것은
+  막지 않고 거의 빈 테이블만 막음
+- index 와의 계약은 `platform`, `idx`, `name`, `address`, `location`, `source_dt`,
+  `b_code` 일곱 열. `b_code` 가 NULL 인 행도 남김. 관리자 등록 지점도 같은 일곱 열로
+  담겨 index 는 구분 없이 카드를 만듦
+- 좌표는 `tb_photo_booth_location`, `tb_subway_station` 과 같은 모양인
+  `location geometry(Point, 4326)` 하나로 담음 (BACKEND-244). 경도나 위도가 없거나
+  유한하지 않으면 NULL. `EnrichedStore` 는 경도·위도 두 필드 그대로이고 COPY 할 때
+  EWKT 로 합치며, 직전 세대를 읽을 때 `ST_X` / `ST_Y` 로 되돌림. 이 열이 없는 직전
+  세대(경도·위도 두 열)는 재사용하지 않으므로 배포 직후 첫 실행은 전 지점을 Kakao 에 물음
+  왕복이 원래 float 와 같아야 재사용이 되므로 `tests/test_stores_enrich_db.py` 가 실제
+  PostGIS 로 확인함 (`make test-stores-sync-db`)
+- `source_type` 으로 수집 지점과 관리자 등록 지점을 구분함. stores-sync 는 이 값을 그대로
+  지점 마스터의 `source_type` 으로 씀 (`docs/spec/stores-sync.md`). 이 열이 없는 직전 세대는 재사용하지 않으므로
+  배포 직후 첫 실행은 전 지점을 Kakao 에 물음
 - 시각 컬럼은 시간대 없는 `TIMESTAMP` 에 KST 벽시계
 - BACKEND-114 의 `tb_temp_photo_booth` 와 별도 테이블. enrich 는 S3 를 읽으므로
   그쪽을 기다리지 않음
 
-구현 : `flows/stores_enrich/table.py:28` `TABLE`,
-`flows/stores_enrich/table.py:135` `def swap_table`,
-`flows/stores_enrich/table.py:105` `def read_current`,
-`flows/stores_enrich/flow.py:42` `MIN_EXPECTED`
+구현 : `flows/stores_enrich/table.py:38` `TABLE`,
+`flows/stores_enrich/table.py:225` `def swap_table`,
+`flows/stores_enrich/table.py:162` `def read_current`,
+`flows/stores_enrich/table.py:94` `def _row`,
+`flows/stores_enrich/flow.py:48` `MIN_EXPECTED`
 
 ## 색인은 별도 flow 가 띄운다
 
@@ -136,6 +171,24 @@ enrich 가 끝나도 색인 Job 을 띄우지 않습니다. 묶으면 enrich 재
 뒤에 돌며 그 시점의 `tb_photo_booth_enriched` 현재 세대를 읽습니다. 정책은
 `docs/spec/search-index.md` 에 있습니다.
 
+## 결과는 Discord 로 알린다
+
+적재가 끝나면(`persist=True`) 결과를 Discord webhook 으로 보냅니다. 실패하거나
+크래시한 run 도 사유와 함께 보냅니다. `legal-dong`, `subway-station` 도 같은 모듈로
+알립니다.
+
+- 주소는 `DISCORD_WEBHOOK_URL`. 비어 있으면 보내지 않음. 로컬 실행이 채널을 울리지 않게
+- 제목 앞에 `SPRING_PROFILES_ACTIVE` 를 붙여 환경을 가름. 비어 있으면 `local`
+- 본문은 브랜드마다 S3 에서 읽은 행 수(`s3`), enriched 에 담긴 수집 지점(`enriched`),
+  관리자 등록 지점(`manual`), 법정동 코드를 못 붙인 지점(`no_bcode`). `s3` 와
+  `enriched` 가 다르면 `(platform, idx)` 중복으로 버린 것
+- `failed` 로 빠진 브랜드와 `stale` 로 대신한 브랜드, `tb_legal_dong` 에 없는 코드를 경고로 붙임
+- **알림 실패로 flow 를 실패시키지 않음.** 알림은 적재 커밋 뒤에 불리고, 발송·본문 조립의 어떤 예외도 경고로만 남김. 새면 이미 끝난 적재가 실패로 기록되고 재시도가 적재를 되풀이함
+
+구현 : `flows/common/discord.py:53` `def notify`,
+`flows/common/discord.py:96` `def notify_failure`,
+`flows/stores_enrich/flow.py:120` `def _report`
+
 ## 외부 의존과 장애
 
 | 의존 | 없거나 죽었을 때 |
@@ -143,6 +196,7 @@ enrich 가 끝나도 색인 Job 을 띄우지 않습니다. 묶으면 enrich 재
 | Postgres | flow 실패. `DATABASE_URL` 이 없으면 시작 직후 `RuntimeError` |
 | S3 (읽기) | 그 브랜드 예외로 flow 실패. 건수 불일치도 같음 |
 | Kakao | 그 지점만 `failed`. 연속 3회면 남은 지점은 묻지 않음. flow 완주 |
+| Discord | 경고만 남김. flow 완주 |
 
 ## 재실행과 백필
 

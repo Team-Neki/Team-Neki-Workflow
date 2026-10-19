@@ -20,16 +20,18 @@ enrich flow 끝에서 색인을 부르지 않습니다. 묶으면 enrich 재시�
 - 색인은 멱등. 같은 `businessDate` 로 다시 돌려도 결과가 같으므로 수동 재실행에
   부담이 없음 (BACKEND-128 의 `RunIdIncrementer` 계약)
 - `businessDate` 는 이 run 의 예약 시각(KST). 백필은 `target_date` 로 줌
-- 스케줄은 BACKEND-65 가 들어올 때 `Cron("30 5 * * *", timezone="Asia/Seoul")`
-  로 붙임. 그 전에 정기로 돌리면 없는 잡 이름으로 종료 코드 1 이라 매일 실패함.
-  스케줄이 없어도 UI 실행 버튼과 `prefect deployment run` 으로 띄울 수 있음
+- 스케줄은 매일 05:30 KST (`Cron("30 5 * * *", timezone="Asia/Seoul")`). enrich
+  (05:00) 뒤 30분. 코드에 둠. UI 에서 붙인 스케줄은 배포(worker 롤링 때 `deploy.py`
+  재등록)가 지움 (BACKEND-244 에서 확인). UI 에서 끈 것은 `deploy.py` 가 보존함.
+  UI 실행 버튼과 `prefect deployment run` 으로 수동 실행도 됨
 - 동시 실행은 `concurrency_limit=1` 로 막음. 서버 잡은 build 와 swap 이 다른
   트랜잭션이라 두 실행의 build 가 swap 보다 먼저 끝나면 두 번째 swap 이 첫 번째를
   되돌려 직전 세대를 서빙하고, 둘 다 COMPLETED 라 알림도 없음
 
 구현 : `flows/search_index/flow.py:25` `def search_index`,
 `flows/search_index/flow.py:33` `cycle = target_date or cycle_date()`,
-`deployments/search_index.py:25` `to_deployment(name="search-index", concurrency_limit=1)`
+`deployments/search_index.py:29` `concurrency_limit=1,`,
+`deployments/search_index.py:30` `schedule=Cron("30 5 * * *"`
 
 ## Job 계약
 
@@ -38,8 +40,13 @@ businessDate=<사이클>` 인자로 k8s Job 에 띄우고 완료를 기다립니
 flow 실패입니다. 환경변수가 없으면 경고 후 끝납니다. 로컬이거나 GitOps 가 아직인
 경우입니다.
 
-- 이미지는 GitOps `overlays/prefect/images.env` (ConfigMap `neki-images`, BACKEND-143).
-  Team-Neki-Server 의 deploy-batch 가 그 줄을 갱신함
+- 이미지는 GitOps 의 환경별 `overlays/prefect/images.env` 또는
+  `overlays/prefect-stg/images.env` (ConfigMap `neki-images`, BACKEND-143).
+  Team-Neki-Server 의 deploy-batch 가 선택한 환경의 줄을 갱신함
+- Job 은 flow run 과 같은 Kubernetes 네임스페이스에 만듭니다. 클러스터 안에서는
+  service account 의 namespace 파일을 읽고, 파일을 읽지 못하면 실패합니다. 로컬
+  매니페스트 확인에서만 `prefect` 를 기본값으로 씁니다. 같은 네임스페이스의
+  `prefect-workflow` Secret 을 참조하므로 staging 과 prod 의 DB 접속 정보가 섞이지 않습니다.
 - Job 이름은 `search-index-<실행 시각>-<UUID hex>`. 같은 초의 실행도 다른 이름입니다.
   prefect-kubernetes 가 `metadata.name` 으로 상태를 읽으므로 `generateName` 은 못 씁니다.
   실행 시각은 YYYY-MM-DD_HHMMSS 형식만 허용하고 밑줄을 하이픈으로 바꿉니다.
@@ -67,11 +74,11 @@ flow 실패입니다. 환경변수가 없으면 경고 후 끝납니다. 로컬�
 - flow run 파드는 SA `prefect-worker`. base job template 기본값이라 deployment 는
   지정하지 않음. Role 이 jobs 생성과 pods/log 조회를 허용함
 
-구현 : `flows/search_index/job.py:37` `IMAGE_ENV`,
-`flows/search_index/job.py:60` `RESOURCES`,
-`flows/search_index/job.py:66` `def manifest`,
-`flows/search_index/job.py:131` `async def _wait_for_completion`,
-`flows/search_index/job.py:138` `def run_search_index`
+구현 : `flows/search_index/job.py:38` `IMAGE_ENV`,
+`flows/search_index/job.py:61` `RESOURCES`,
+`flows/search_index/job.py:77` `def manifest`,
+`flows/search_index/job.py:144` `async def _wait_for_completion`,
+`flows/search_index/job.py:151` `def run_search_index`
 
 ## 외부 의존과 장애
 
@@ -87,7 +94,7 @@ flow 실패입니다. 환경변수가 없으면 경고 후 끝납니다. 로컬�
 
 - `make check` : 임포트, deployment 수집, anchor, pytest (매니페스트 이름과 인자)
 - 로컬 `make search-index` 는 `NEKI_BATCH_IMAGE` 가 없어 경고 후 끝나는 것이 정상
-- staging 에서 `search-index` 를 수동 실행해 `kubectl -n prefect get jobs` 에
+- staging 에서 `search-index-stg` 를 수동 실행해 `kubectl -n prefect-stg get jobs` 에
   `search-index-<시각>` 이 생기고 flow 로그에 batch 파드 로그가 보이는지 봄
 
 ## 정리
