@@ -278,13 +278,18 @@ Prefect 3 에서 동기 서브플로우 호출은 순차라 `ThreadPoolExecutor`
 아예 두지 않는 이유는 pause 는 배포가 덮어쓰는 문제를 계속 신경 써야 하기
 때문입니다.
 
-UI 에서 끈 스케줄은 `deploy.py` 가 배포 전에 읽어 두었다가 되돌립니다. 반대로 다시
-켠 것을 배포가 끄지도 않습니다.
+`deploy.py` 는 배포 전에 기존 deployment 의 `paused` 와 각 스케줄의 `active` 를
+읽어 등록 payload 에 반영합니다. 일부 deployment 등록이 실패해도 이미 등록한
+것의 상태가 풀리지 않습니다. UI 에서 다시 켠 상태도 그대로 보존합니다.
+스케줄은 slug 가 있으면 slug, 없으면 순서로 대응하며 새 스케줄은 코드의 기본값을
+사용합니다. 새 stg deployment 만 최초 등록 시 pause 하고, 기존 stg/prod 는 읽은
+상태를 사용합니다. 배포 중 UI 상태 변경은 피합니다. 상태 조회 뒤 변경은 이
+스냅샷에 반영되지 않습니다.
 
 구현 : `deployments/stores_collect.py:26` `schedule=Cron(`,
 `deployments/__init__.py:14` `def collect`,
-`deploy.py:47` `async def read_states`,
-`deploy.py:69` `async def restore_states`
+`deploy.py:44` `async def read_states`,
+`deploy.py:66` `def preserve_state`
 
 ## 외부 의존과 장애
 
@@ -341,24 +346,25 @@ SELECT * FROM (
 
 이미지 하나를 worker 와 flow run 이 같이 씁니다. main 에 머지되면 Actions 가
 이미지를 `ghcr.io/team-neki/team-neki-workflow:<version>-<sha7>` 로 밀고 GitOps
-`overlays/prefect/worker.yaml` 의 태그를 커밋합니다. ArgoCD 가 worker 를 롤링하고
+`overlays/prefect-stg/worker.yaml` 의 태그를 커밋합니다. prod 는 main 에서
+Actions 를 `environment=prod` 로 수동 실행할 때만 `overlays/prefect/worker.yaml` 을
+갱신합니다. ArgoCD 가 worker 를 롤링하고
 initContainer 가 `deploy.py` 로 deployment 를 재등록하며, 다음 run 부터 새
 이미지가 씁니다. 이미지에 구운 `WORKFLOW_IMAGE` 가 `job_variables.image` 로
 들어가지 않으면 flow run 이 베이스 prefect 이미지로 떠서 `flows` 를 찾지 못합니다.
 
-머지 전에 브랜치를 올려 보려면 Actions build 를 `ref` 에 브랜치명을 적어 실행합니다.
-Prefect 환경이 하나라 그 동안 staging worker 전체가 그 브랜치 코드로 돌고, 04:00
-예약 run 도 그 이미지로 돕니다. 팀원과 겹치면 서로 되돌리게 되므로 올리기 전에
-알리고, 확인이 끝나면 `ref` 를 비우고 다시 실행해 main 으로 되돌립니다. 절차는
-`docs/runbook.md` 에 있습니다.
+머지 전에 브랜치를 올려 보려면 Actions build 에서 `environment=stg` 와 `ref` 에
+브랜치명을 적어 실행합니다. `overlays/prefect-stg/worker.yaml` 만 갱신되고
+`neki-stg-pool` 의 `-stg` deployment 가 그 이미지로 돕니다. prod worker 는
+그대로입니다. 절차는 `docs/runbook.md` 에 있습니다.
 
 레이아웃이나 테이블 모양이 바뀐 배포는 이전 산출물과 섞이면 안 됩니다. staging 은
 버킷을 비우고 `tb_store_collect_manifest` 를 지운 뒤 한 번 돌려 확인합니다.
 
-구현 : `.github/workflows/build.yml:22` `ref:`,
-`.github/workflows/build.yml:39` `GITOPS_PATH:`,
+구현 : `.github/workflows/build.yml:26` `ref:`,
+`.github/workflows/build.yml:167` `GITOPS_PATH:`,
 `Dockerfile:27` `ENV WORKFLOW_IMAGE`,
-`deploy.py:118` `WORKFLOW_IMAGE`
+`deploy.py:94` `WORKFLOW_IMAGE`
 
 ## 변경 검증
 

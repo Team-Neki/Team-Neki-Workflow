@@ -365,9 +365,9 @@ make serve PORT=4300
 푸시와 GitOps 레포 태그 커밋 둘뿐입니다.
 
 ```text
-main merge
-  -> build.yml      이미지 빌드, ghcr.io/team-neki/team-neki-workflow:<version>-<sha7> 와 :main 푸시
-  -> build.yml      Team-Neki-GitOps overlays/prefect/worker.yaml 의 image 태그 커밋
+main merge (stg) / Actions 수동 실행 environment=stg|prod (선택한 환경)
+  -> build.yml      이미지 빌드, ghcr.io/team-neki/team-neki-workflow:<version>-<sha7> 와 :prod/:stg 푸시
+  -> build.yml      해당 환경의 GitOps worker.yaml 에 불변 image 태그 커밋
   -> ArgoCD         worker Deployment 롤링
   -> initContainer  /opt/prefect 에서 python deploy.py (deployment 등록 갱신, pause 보존)
   -> 다음 flow run 부터 새 이미지
@@ -377,17 +377,23 @@ worker와 flow run(Job 파드)이 같은 이미지를 씁니다. 이미지에 `W
 참조가 구워져 있어 `deploy.py`가 그 값을 각 deployment의 `job_variables.image`에
 넣습니다. 태그의 version은 `pyproject.toml`에서 읽습니다.
 
-자격증명(`KAKAO_API_KEY`, `DATABASE_URL` 등)은 GitOps 레포의 k8s Secret
+Prefect API 와 실행 기록은 공유합니다. 기존 `prefect` 네임스페이스의 worker 는 prod,
+새 `prefect-stg` 네임스페이스의 worker 는 stg 입니다. 최초 GitOps 설정은
+`replicas: 0`이므로 이미지·Secret 준비 후 GitOps에서 1로 변경해야 합니다.
+자세한 순서는 `docs/runbook.md`의 staging 최초 활성화 절을 따릅니다. work pool 은 각각 `neki-pool` 과
+`neki-stg-pool` 이며, stg deployment 이름에는 `-stg` 가 붙습니다. 새 stg deployment 는
+처음에 pause 상태로 등록되므로 수동 확인 후 필요한 스케줄을 켭니다. 자격증명
+(`KAKAO_API_KEY`, `DATABASE_URL`, `S3_BUCKET` 등)은 각 네임스페이스의 k8s Secret
 `prefect-workflow`가 flow run Job 파드 환경변수로 넣습니다. worker 파드가 아니라 Job
 파드입니다. flow 코드는 Job 안에서 돌기 때문에 worker에 env를 넣어도 flow에는
 전달되지 않습니다. IAM role은 없고 코드는 환경변수만 봅니다. 매니페스트와 RBAC은
-GitOps 레포 `overlays/prefect/`에 있습니다.
+GitOps 레포 `overlays/prefect/` 와 `overlays/prefect-stg/` 에 있습니다.
 
 `DATABASE_URL`은 `legal-dong`, `subway-station`이 앱 DB(Team-Neki-Server의
 PostgreSQL)에 적재할 때 쓰고, 지점 수집 flow가 `tb_store_collect_manifest`에 적재
 위치를 남길 때도 씁니다. Prefect 메타DB가 아닙니다. 없으면 flow가 시작 직후
 `RuntimeError`로 실패합니다. 새 flow가 환경변수를 추가로 읽으면 GitOps의
-`workflow-secret.example.yaml`에 키를 같이 추가합니다.
+두 overlay 의 `workflow-secret.example.yaml`에 키를 같이 추가합니다.
 
 ### Actions 준비
 
@@ -438,7 +444,7 @@ UI에서 꺼둔 스케줄이 배포할 때마다 되살아납니다. Airflow에�
 마찬가지로 되살아납니다. 반면 Prefect 서버나 worker의 재시작은 정의를 건드리지
 않으므로 pause가 유지됩니다.
 
-`deploy.py`는 배포 전 `paused`와 각 스케줄의 `active`를 읽어두고 등록 후 되돌려 이
+`deploy.py`는 배포 전 `paused`와 각 스케줄의 `active`를 읽어두고 등록 payload 에 반영해 이
 문제를 막습니다. 반대로 UI에서 다시 켠 것을 배포가 도로 끄지도 않습니다.
 
 **따라서 운영 스케줄 등록은 반드시 `deploy.py`를 거쳐야 합니다.** `prefect deploy`나
