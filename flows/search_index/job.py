@@ -53,6 +53,16 @@ TIMEOUT_SECONDS = 1800
 # 완료된 Job 을 k8s 가 치우는 시간. 실패 파드의 로그를 볼 여유다.
 FINISHED_JOB_TTL = 86400
 
+# batch 이미지의 JVM heap 상한은 컨테이너 memory limit 의 50% 다 (서버 Dockerfile 의
+# JAVA_TOOL_OPTIONS). limit 이 없으면 노드 메모리의 50% 까지 커지고 request 도 없어
+# 노드의 api 파드와 메모리를 다투므로 묶는다. 지점 1,653건 실측에서 GC 후 heap 은
+# 56MB 였다. 512Mi 면 heap 256MB 로 4배 넘게 남는다. 기동이 CPU 를 많이 써서 CPU
+# limit 은 한 코어로 둔다.
+RESOURCES = {
+    "requests": {"memory": "256Mi", "cpu": "250m"},
+    "limits": {"memory": "512Mi", "cpu": "1000m"},
+}
+
 
 def job_namespace() -> str:
     """클러스터에서는 현재 파드의 네임스페이스를 사용한다."""
@@ -122,6 +132,7 @@ def manifest(
                                     },
                                 },
                             ],
+                            "resources": RESOURCES,
                         }
                     ],
                 }
