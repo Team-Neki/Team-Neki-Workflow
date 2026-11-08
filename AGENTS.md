@@ -12,6 +12,7 @@
 
 | 작업 대상 | 먼저 읽을 문서 |
 |---|---|
+| 브랜드 소식 수집(events) | `docs/spec/events-collect.md`, `docs/lld/events-web-collect.md`(CSV 완료 인덱스) |
 | 지점 수집(collect) | `docs/spec/collect-pipeline.md`, `docs/lld/pipeline-notes.md`의 수집 절 |
 | 지점 보강(enrich) | `docs/spec/enrich-pipeline.md`, `docs/lld/pipeline-notes.md`의 보강 절 |
 | 지점 동기화(stores-sync) | `docs/spec/stores-sync.md` |

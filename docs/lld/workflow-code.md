@@ -26,6 +26,9 @@ src/neki_workflow/
       enrich/              법정동 보강
       sync/                지점 마스터 동기화
       common/              지점 스키마·S3 적재·manifest·수집 공통 코드
+    events/
+      collect/             브랜드 소식: photosignature.py, harufilm.py
+      common/              원문 스키마·HTTP·이미지 검증·S3 저장
     search_index/          서버 색인 Job 실행
     common/                도메인 공통 DB 연결·알림
 aws/config                로컬 개발용 AWS 프로파일
