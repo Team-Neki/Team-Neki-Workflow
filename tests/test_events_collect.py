@@ -31,24 +31,24 @@ def png() -> bytes:
 
 
 def test_parsers_keep_raw_dates_and_missing_values():
-    post = parse_signature(SIGNATURE, 7, OBSERVED)[0]
+    post = parse_signature(SIGNATURE, OBSERVED)[0]
     assert (post.external_id, post.published_at_raw, post.frame_period_raw) == (
         "580", "2026-10-01", "10.01~12.31"
     )
     assert post.source_url.endswith("bo_table=frame&wr_id=580")
     assert post.raw_content["detail"] is None
-    post = parse_harufilm(HARUFILM + HARUFILM, 8, OBSERVED)[0]
-    assert len(parse_harufilm(HARUFILM + HARUFILM, 8, OBSERVED)) == 1
+    post = parse_harufilm(HARUFILM + HARUFILM, OBSERVED)[0]
+    assert len(parse_harufilm(HARUFILM + HARUFILM, OBSERVED)) == 1
     assert post.title == "하루필름 소식"
     assert post.frame_period_raw is None
     assert "not-for-storage" not in post.raw_content["listing"]
     assert "<script" not in post.raw_content["listing"]
     missing = SIGNATURE.replace("2026-10-01", "unknown")
-    assert parse_signature(missing, 7, OBSERVED)[0].published_at_raw is None
+    assert parse_signature(missing, OBSERVED)[0].published_at_raw is None
 
 
 def test_detail_keeps_original_order_and_marks_unknown_images():
-    post = parse_harufilm(HARUFILM, 8, OBSERVED)[0]
+    post = parse_harufilm(HARUFILM, OBSERVED)[0]
     web.read_detail(post, '''<div class="board_txt_area"><img src="/a.png">
     <img><img data-original="https://cdn.imweb.me/b.png" src="placeholder"></div>''',
                     selector=".board_txt_area")
@@ -59,7 +59,7 @@ def test_detail_keeps_original_order_and_marks_unknown_images():
 
 
 def test_empty_detail_is_not_a_missing_container():
-    post = parse_harufilm(HARUFILM, 8, OBSERVED)[0]
+    post = parse_harufilm(HARUFILM, OBSERVED)[0]
     web.read_detail(post, '<div class="board_txt_area">텍스트만</div>', selector=".board_txt_area")
     assert post.images == [] and post.image_list_complete is True
     with pytest.raises(ValueError, match="상세 본문"):
@@ -115,7 +115,7 @@ def test_image_validation_and_content_addressed_storage(monkeypatch):
     assert a.s3_key == b.s3_key and len(objects) == 1
     assert a.s3_key == f"events/raw/harufilm-news/123/images/{a.sha256}.png"
     assert a.content_type == "image/png" and a.byte_size == len(data)
-    post = parse_harufilm(HARUFILM, 8, OBSERVED)[0]
+    post = parse_harufilm(HARUFILM, OBSERVED)[0]
     post.images = [a, b]
     assert storage.put_post.fn(post) == storage.put_post.fn(post)
     assert len(objects) == 2
@@ -153,16 +153,20 @@ def run_collect(monkeypatch, image_error=None):
             raise image_error or ValueError("bad file")
         return CollectedImage(1, image.source_url, "events/images/hash.png", "hash", "image/png", 50)
     monkeypatch.setattr(web, "collect_image", collect_image)
-    kwargs = dict(brand_id=8, source_key="harufilm-news", list_url="https://harufilm.com/301/", source_hosts=("harufilm.com",),
+    kwargs = dict(source_key="harufilm-news", list_url="https://harufilm.com/301/", source_hosts=("harufilm.com",),
                   image_hosts=("cdn.imweb.me",), parser=parse_harufilm, detail_selector=".board_txt_area",
                   pages=1, max_posts=None, persist=True, delay_seconds=0)
     return snapshots, kwargs
 
 
 def test_partial_failure_keeps_raw_and_image_position(monkeypatch):
-    snapshots, kwargs = run_collect(monkeypatch)
+    snapshots, kwargs = run_collect(monkeypatch, httpx.ConnectError("timeout"))
+    merge = Mock()
+    monkeypatch.setattr(web, "merge_index", merge)
     summary = web.collect_posts(**kwargs)
-    assert summary["incomplete"] == 1
+    assert (summary["incomplete"], summary["failed"]) == (1, 0)
+    assert "timeout" in summary["reasons"]["123"]
+    merge.assert_not_called()
     post = snapshots[-1]
     assert snapshots[0].raw_content["detail"] is None
     assert snapshots[1].raw_content["detail"] is not None
@@ -170,6 +174,27 @@ def test_partial_failure_keeps_raw_and_image_position(monkeypatch):
     assert [i.image_order for i in post.images] == [0, 1]
     assert post.images[0].s3_key is None
     assert snapshots[-1].images[1].s3_key == "events/images/hash.png"
+
+
+def test_permanent_image_failure_is_recorded_and_skipped_later(monkeypatch):
+    _, kwargs = run_collect(monkeypatch, ValueError("bad file"))
+    merge = Mock()
+    monkeypatch.setattr(web, "merge_index", merge)
+    summary = web.collect_posts(**kwargs)
+    assert (summary["incomplete"], summary["failed"]) == (0, 1)
+    assert summary["reasons"]["123"].startswith("영구 실패")
+    [(source_key, additions)] = [call.args for call in merge.call_args_list]
+    assert source_key == "harufilm-news" and additions["123"][0] == "failed"
+
+
+@pytest.mark.parametrize("error,expected", [
+    (ValueError("bad file"), True),
+    (httpx.HTTPStatusError("", request=httpx.Request("GET", "https://a"), response=httpx.Response(404)), True),
+    (httpx.HTTPStatusError("", request=httpx.Request("GET", "https://a"), response=httpx.Response(503)), False),
+    (httpx.ConnectError("timeout"), False),
+])
+def test_permanent_failure_classification(error, expected):
+    assert web.permanent(error) is expected
 
 
 def test_image_block_aborts_and_preserves_snapshot(monkeypatch):
@@ -222,8 +247,8 @@ def test_image_size_limit_is_enforced(monkeypatch):
 
 def test_completed_post_skips_detail_and_images(monkeypatch):
     _, kwargs = run_collect(monkeypatch)
-    saved = parse_harufilm(HARUFILM, 8, OBSERVED)[0]
-    monkeypatch.setattr(web, "read_index", lambda _: ({saved.external_id: OBSERVED}, "etag"))
+    saved = parse_harufilm(HARUFILM, OBSERVED)[0]
+    monkeypatch.setattr(web, "read_index", lambda _: ({saved.external_id: ("complete", OBSERVED)}, "etag"))
     monkeypatch.setattr(web, "read_completed", Mock(side_effect=AssertionError("indexed post read")))
     fetch = Mock(return_value=HARUFILM)
     image = Mock(side_effect=AssertionError("completed image requested"))
@@ -235,7 +260,7 @@ def test_completed_post_skips_detail_and_images(monkeypatch):
 
 
 def test_completion_requires_all_images(monkeypatch):
-    post = parse_harufilm(HARUFILM, 8, OBSERVED)[0]
+    post = parse_harufilm(HARUFILM, OBSERVED)[0]
     write = Mock()
     monkeypatch.setattr(storage, "put_object", write)
     storage.complete_post.fn(post)
@@ -257,14 +282,14 @@ def test_missing_index_recovers_without_detail_requests(monkeypatch):
     monkeypatch.setattr(web, "fetch_page", fetch)
     monkeypatch.setattr(web, "merge_index", merge)
     result = web.collect_posts(**kwargs)
-    assert result == dict(discovered=1, skipped=0, collected=0, recovered=1, incomplete=0)
+    assert result == dict(discovered=1, skipped=0, collected=0, recovered=1, incomplete=0, failed=0, reasons={})
     assert fetch.call_count == 1
-    merge.assert_called_once_with("harufilm-news", {"123": OBSERVED})
+    merge.assert_called_once_with("harufilm-news", {"123": ("complete", OBSERVED)})
 
 
 def test_new_post_is_added_without_reading_existing_post(monkeypatch):
     _, kwargs = run_collect(monkeypatch)
-    monkeypatch.setattr(web, "read_index", lambda _: ({"123": OBSERVED}, "etag"))
+    monkeypatch.setattr(web, "read_index", lambda _: ({"123": ("complete", OBSERVED)}, "etag"))
     reads = []
     def read(post):
         reads.append(post.external_id)
@@ -276,9 +301,10 @@ def test_new_post_is_added_without_reading_existing_post(monkeypatch):
     monkeypatch.setattr(web, "complete_post", lambda post: OBSERVED)
     merge = Mock()
     monkeypatch.setattr(web, "merge_index", merge)
-    assert web.collect_posts(**kwargs) == dict(discovered=2, skipped=1, collected=1, recovered=0, incomplete=0)
+    assert web.collect_posts(**kwargs) == dict(
+        discovered=2, skipped=1, collected=1, recovered=0, incomplete=0, failed=0, reasons={})
     assert reads == ["124"]
-    merge.assert_called_once_with("harufilm-news", {"124": OBSERVED})
+    merge.assert_called_once_with("harufilm-news", {"124": ("complete", OBSERVED)})
 
 
 def test_index_error_stops_before_source_requests(monkeypatch):

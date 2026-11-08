@@ -224,9 +224,8 @@ clean: ## 빌드 산출물과 캐시를 지운다
 	rm -rf dist build *.egg-info
 	find . -type d -name __pycache__ -not -path './.venv/*' -exec rm -rf {} +
 
-# 실제 운영 브랜드 ID를 EVENT_BRAND_ID 환경변수로 전달한다.
 photosignature-events: ## 포토시그니처 브랜드 소식 원문과 이미지를 S3에 저장한다
-	$(UV) run python -c "import os; from neki_workflow.flows.events.collect.photosignature import photosignature_events; photosignature_events(brand_id=int(os.environ['EVENT_BRAND_ID']))"
+	$(UV) run python -c "from neki_workflow.flows.events.collect.photosignature import photosignature_events; photosignature_events()"
 
 harufilm-events: ## 하루필름 브랜드 소식 원문과 이미지를 S3에 저장한다
-	$(UV) run python -c "import os; from neki_workflow.flows.events.collect.harufilm import harufilm_events; harufilm_events(brand_id=int(os.environ['EVENT_BRAND_ID']))"
+	$(UV) run python -c "from neki_workflow.flows.events.collect.harufilm import harufilm_events; harufilm_events()"

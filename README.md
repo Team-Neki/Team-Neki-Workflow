@@ -457,14 +457,13 @@ UI에서 꺼둔 스케줄이 배포할 때마다 되살아납니다. Airflow에�
 포토시그니처 프레임과 하루필름 공지를 `flows/events/collect/`에서 수집합니다.
 OCR·기간 판정·운영 DB 반영은 후속 enrich의 책임입니다.
 
-- `brand_id`: 실제 운영 브랜드 ID, 필수 입력. PoC ID를 자동 변환하지 않음
+- 브랜드: 실행 인자 없음. 출처 모듈이 `Platform` 값(`tb_brand.code`)을 원문 `brand_code`에 기록. 운영 `brand_id` 변환은 enrich 책임
 - `pages`: 수집할 목록 페이지 수, 기본 1. 전체 이력 수집을 보장하지 않음
 - `max_posts`: 로컬 확인용 게시물 수 제한, 기본 제한 없음
 - `persist=False`: S3 쓰기 없이 원문·이미지 다운로드와 검증 수행
-- 수동 deployment: `photosignature-events`, `harufilm-events`. 실행 시 brand_id 지정, cron 없음
+- 수동 deployment: `photosignature-events`, `harufilm-events`. cron 없음
 
 ```bash
-# EVENT_BRAND_ID에 해당 브랜드의 실제 ID를 지정한 뒤 실행
 make photosignature-events
 make harufilm-events
 ```
@@ -480,7 +479,6 @@ make harufilm-events
 # .env가 없다면 .env.example을 복사해 준비
 make localstack
 
-# 해당 브랜드의 ID를 EVENT_BRAND_ID로 지정한 환경에서 실행
 make photosignature-events
 make harufilm-events
 make s3-ls
@@ -494,12 +492,16 @@ make s3-ls
 기존 `S3_BUCKET`·AWS 자격증명을 사용하며 DB 접속은 필요하지 않습니다.
 게시물별 `events/raw/<출처>/<게시물 ID>/`에 원문 JSON과 `images/<해시>.<확장자>`를
 저장합니다. 상세 확인과 이미지 저장이 모두 끝나면 `post.json`을 남깁니다.
-완료 ID는 출처별 `collected.csv`에 모아 배치 시작 시 한 번 읽습니다.
+수집이 끝난 ID는 출처별 `collected.csv`(`external_id,status,recorded_at`)에 모아
+배치 시작 시 한 번 읽습니다. `status`는 완료(`complete`) 또는 영구 실패(`failed`)입니다.
 CSV에 있는 ID는 상세·이미지·완료 원문 조회를 생략하고, 없는 ID만 `post.json`으로
-복구하거나 신규 수집합니다. 배치 종료 시 새 완료 ID를 조건부 병합 저장합니다.
-flow는 `discovered`, `skipped`, `collected`, `recovered`, `incomplete` 건수를 반환합니다.
+복구하거나 신규 수집합니다. 배치 종료 시 새 ID를 조건부 병합 저장합니다.
+flow는 `discovered`, `skipped`, `collected`, `recovered`, `incomplete`, `failed` 건수와
+미완료·영구 실패 ID별 사유 `reasons`를 반환합니다.
 갱신·복구 상세는 [CSV 완료 인덱스 LLD](docs/lld/events-web-collect.md)에 있습니다.
-미완료 게시물은 다시 수집하며, 완료된 게시물의 수정·삭제는 자동 감지하지 않습니다.
+5xx·네트워크 오류로 미완료된 게시물은 다음 실행에서 다시 수집합니다. `data:` 주소·이미지 4xx·
+파일 검증 실패만 남은 게시물은 영구 실패로 기록해 생략하며, 다시 수집하려면 CSV에서
+해당 행을 지웁니다. 완료된 게시물의 수정·삭제는 자동 감지하지 않습니다.
 
 이미지 검증은 Pillow로 수행합니다. HTTP 오류 페이지나 손상된 파일은 이미지로
 저장하지 않습니다. 개별 파일 실패는 URL·원문 순서와 함께 남기고, 차단 응답은

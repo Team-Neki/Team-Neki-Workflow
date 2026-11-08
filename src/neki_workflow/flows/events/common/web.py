@@ -15,7 +15,7 @@ from prefect import get_run_logger, task
 
 from neki_workflow.flows.events.common.post import CollectedImage, CollectedPost
 from neki_workflow.flows.events.common.storage import (
-    bucket, complete_post, post_prefix, put_object, put_post, read_completed, read_index, merge_index,
+    bucket, complete_post, post_prefix, put_object, put_post, read_completed, read_index, merge_index, utc_string,
 )
 
 MAX_BYTES = 20 * 1024 * 1024
@@ -38,6 +38,13 @@ def retry_request(task, task_run, state) -> bool:
     except Exception:
         return True
     return False
+
+
+def permanent(error: Exception) -> bool:
+    """재시도해도 결과가 같은 실패. 5xx·네트워크 오류는 다음 실행에서 다시 시도한다."""
+    if isinstance(error, httpx.HTTPStatusError):
+        return error.response.status_code < 500
+    return isinstance(error, ValueError)
 
 
 def checked_url(url: str, hosts: tuple[str, ...]) -> str:
@@ -142,14 +149,14 @@ def read_detail(post: CollectedPost, html: str, *, selector: str) -> None:
 
 
 def collect_posts(
-    *, brand_id: int, source_key: str, list_url: str, source_hosts: tuple[str, ...],
-    image_hosts: tuple[str, ...], parser: Callable[[str, int, str], list[CollectedPost]],
+    *, source_key: str, list_url: str, source_hosts: tuple[str, ...],
+    image_hosts: tuple[str, ...], parser: Callable[[str, str], list[CollectedPost]],
     detail_selector: str, pages: int, max_posts: int | None, persist: bool,
     delay_seconds: float,
-) -> dict[str, int]:
+) -> dict[str, int | dict[str, str]]:
     """지정한 목록 범위를 처리한다. 이미지 일부 실패는 누락 참조로 보존한다."""
-    if brand_id <= 0 or pages <= 0 or (max_posts is not None and max_posts <= 0):
-        raise ValueError("brand_id, pages, max_posts는 양수여야 합니다.")
+    if pages <= 0 or (max_posts is not None and max_posts <= 0):
+        raise ValueError("pages, max_posts는 양수여야 합니다.")
     if delay_seconds < 0:
         raise ValueError("delay_seconds는 0 이상이어야 합니다.")
     if persist:
@@ -161,7 +168,7 @@ def collect_posts(
         url = str(httpx.URL(list_url).copy_merge_params({"page": page}))
         html = fetch_page(url, hosts=source_hosts, delay_seconds=delay_seconds)
         observed_at = datetime.now(timezone.utc).isoformat()
-        found = parser(html, brand_id, observed_at)
+        found = parser(html, observed_at)
         if not found:
             if page == 1:
                 raise ValueError("목록 게시물이 없습니다. 빈 목록 또는 파서 변경 확인이 필요합니다.")
@@ -175,8 +182,9 @@ def collect_posts(
             break
     posts = list(records.values())[:max_posts]
     detailed = 0
-    summary = dict(discovered=len(posts), skipped=0, collected=0, recovered=0, incomplete=0)
-    additions = {}
+    summary = dict(discovered=len(posts), skipped=0, collected=0, recovered=0, incomplete=0, failed=0)
+    reasons: dict[str, str] = {}
+    additions: dict[str, tuple[str, str]] = {}
     for post in posts:
         if post.source_key != source_key:
             raise ValueError("목록 게시물의 출처가 요청과 다릅니다.")
@@ -185,7 +193,7 @@ def collect_posts(
             continue
         saved_at = read_completed(post) if persist else None
         if saved_at is not None:
-            additions[post.external_id] = saved_at
+            additions[post.external_id] = ("complete", saved_at)
             summary["recovered"] += 1
             continue
         # 상세 요청 실패 시에도 목록에서 확보한 원문은 보존한다.
@@ -201,9 +209,12 @@ def collect_posts(
         except (httpx.HTTPError, ValueError) as error:
             logger.warning("%s 상세 수집 실패: %s", post.external_id, error)
             summary["incomplete"] += 1
+            reasons[post.external_id] = f"상세 수집 실패: {error}"
             continue
         if persist:
             put_post(post)
+        missing = [] if post.image_list_complete else ["읽을 수 없는 이미지 주소"]
+        retryable = False
         try:
             for position, image in enumerate(post.images):
                 try:
@@ -212,6 +223,8 @@ def collect_posts(
                     )
                 except (httpx.HTTPError, ValueError) as error:
                     logger.warning("%s 이미지 %d 미확보: %s", post.external_id, image.image_order, error)
+                    missing.append(f"이미지 {image.image_order}: {error}")
+                    retryable = retryable or not permanent(error)
         finally:
             # 중간 차단에도 이미 확보한 파일 참조는 잃지 않는다. S3 오류는 전파한다.
             if persist:
@@ -220,14 +233,24 @@ def collect_posts(
         if persist:
             completed_at = complete_post(post)
             if completed_at is not None:
-                additions[post.external_id] = completed_at
+                additions[post.external_id] = ("complete", completed_at)
             complete = completed_at is not None
         else:
             complete = post.image_list_complete is True and all(image.sha256 for image in post.images)
-        summary["collected" if complete else "incomplete"] += 1
+        if complete:
+            summary["collected"] += 1
+        elif retryable:
+            summary["incomplete"] += 1
+            reasons[post.external_id] = "; ".join(missing)
+        else:
+            # 재시도해도 같은 원인만 남았다. 매 실행 다시 받지 않도록 CSV에 남긴다.
+            summary["failed"] += 1
+            reasons[post.external_id] = "영구 실패: " + "; ".join(missing)
+            if persist:
+                additions[post.external_id] = ("failed", utc_string(datetime.now(timezone.utc)))
     if not detailed and len(posts) > summary["skipped"] + summary["recovered"]:
         raise RuntimeError("상세 수집이 전부 실패했습니다. 저장한 목록 원문을 확인하세요.")
     if persist and additions:
         merge_index(source_key, additions)
-    logger.info("수집 결과: %s", summary)
-    return summary
+    logger.info("수집 결과: %s, 사유: %s", summary, reasons)
+    return {**summary, "reasons": reasons}

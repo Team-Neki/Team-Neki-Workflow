@@ -15,7 +15,7 @@ class CollectedImage:
 
 @dataclass
 class CollectedPost:
-    brand_id: int
+    brand_code: str
     source_key: str
     external_id: str
     source_url: str

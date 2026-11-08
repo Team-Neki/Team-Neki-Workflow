@@ -80,14 +80,10 @@ def read_completed(post: CollectedPost) -> str | None:
     data = json.loads(response["Body"].read())
     data["images"] = [CollectedImage(**image) for image in data["images"]]
     saved = CollectedPost(**data)
-    if (saved.brand_id, saved.source_key, saved.external_id) != (
-        post.brand_id, post.source_key, post.external_id
+    if (saved.brand_code, saved.source_key, saved.external_id) != (
+        post.brand_code, post.source_key, post.external_id
     ):
         raise ValueError("저장된 게시물 식별자와 요청이 다릅니다.")
-    if (saved.image_list_complete is not True or not saved.raw_content.get("detail")
-            or any(not all((image.s3_key, image.sha256, image.content_type, image.byte_size))
-                   for image in saved.images)):
-        raise ValueError("완료 원문의 상세 또는 이미지 정보가 누락됐습니다.")
     return utc_string(response["LastModified"])
 
 
@@ -105,8 +101,8 @@ def complete_post(post: CollectedPost) -> str | None:
 
 
 @task(retries=3, retry_delay_seconds=[2, 5, 10], retry_condition_fn=retry_storage)
-def read_index(source_key: str) -> tuple[dict[str, str], str | None]:
-    """출처별 CSV를 검증한다. 손상된 파일을 빈 목록으로 대체하지 않는다."""
+def read_index(source_key: str) -> tuple[dict[str, tuple[str, str]], str | None]:
+    """출처별 CSV를 읽는다. 헤더가 다른 파일을 빈 목록으로 대체하지 않는다."""
     client = boto3.Session().client("s3")
     try:
         response = client.get_object(Bucket=bucket(), Key=f"events/raw/{source_key}/collected.csv")
@@ -115,23 +111,13 @@ def read_index(source_key: str) -> tuple[dict[str, str], str | None]:
             return {}, None
         raise
     reader = csv.DictReader(StringIO(response["Body"].read().decode("utf-8")), strict=True)
-    if reader.fieldnames != ["external_id", "completed_at"]:
+    if reader.fieldnames != ["external_id", "status", "recorded_at"]:
         raise ValueError("완료 CSV 헤더가 올바르지 않습니다.")
-    entries = {}
-    for row in reader:
-        external_id, completed_at = row["external_id"], row["completed_at"]
-        if (None in row or not external_id or external_id != external_id.strip()
-                or external_id in entries or not completed_at):
-            raise ValueError("완료 CSV에 누락 또는 중복된 ID가 있습니다.")
-        timestamp = datetime.fromisoformat(completed_at.replace("Z", "+00:00"))
-        if timestamp.utcoffset() != timezone.utc.utcoffset(timestamp):
-            raise ValueError("완료 CSV 시각은 UTC여야 합니다.")
-        entries[external_id] = completed_at
-    return entries, response["ETag"]
+    return {row["external_id"]: (row["status"], row["recorded_at"]) for row in reader}, response["ETag"]
 
 
 @task(retries=3, retry_delay_seconds=[2, 5, 10], retry_condition_fn=retry_storage)
-def merge_index(source_key: str, additions: dict[str, str]) -> None:
+def merge_index(source_key: str, additions: dict[str, tuple[str, str]]) -> None:
     """재시도마다 최신 CSV를 읽어 병합한다. 낡은 ETag로 PUT만 반복하지 않는다."""
     if not additions:
         return
@@ -142,8 +128,8 @@ def merge_index(source_key: str, additions: dict[str, str]) -> None:
     entries.update(new)
     output = StringIO(newline="")
     writer = csv.writer(output)
-    writer.writerow(["external_id", "completed_at"])
-    writer.writerows(sorted(entries.items()))
+    writer.writerow(["external_id", "status", "recorded_at"])
+    writer.writerows((key, *value) for key, value in sorted(entries.items()))
     condition = {"IfMatch": etag} if etag is not None else {"IfNoneMatch": "*"}
     boto3.Session().client("s3").put_object(
         Bucket=bucket(), Key=f"events/raw/{source_key}/collected.csv",

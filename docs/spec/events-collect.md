@@ -7,19 +7,20 @@
 
 - 포토시그니처 frame 게시판과 하루필름 301 공지 게시판의 목록·상세·이미지 수집.
 - 브랜드별 파일은 `flows/events/collect/<브랜드>.py`. 공통 HTTP·이미지·저장은 events 내부에서 공유.
-- `brand_id`는 실제 운영 브랜드 ID를 실행 인자로 받음. PoC의 brand-04/05를 운영 ID로 간주하지 않음.
+- 브랜드는 실행 인자로 받지 않음. 출처 모듈이 `Platform` 값(`tb_brand.code`)을 상수로 두고 원문 `brand_code`에 기록. 운영 `brand_id` 변환은 DB에 반영하는 enrich 책임.
 - `pages=1`은 초기 실행 범위이며 전체 이력 수집을 의미하지 않음. 지정 페이지를 순차 조회하고 게시물 ID로 중복 제거. 같은 목록이 반복되면 중단. 수집 일정은 미정이므로 deployment에 cron을 두지 않음.
 - `max_posts` 지정 시 목록 앞쪽 일부만 실행(로컬 검증용). 기본값은 제한 없음. 목록 미발견을 삭제로 해석하지 않음.
-- 배치 시작 시 출처별 collected.csv를 읽어 완료 ID를 메모리에 유지. 완료 ID는 상세·이미지·post.json 요청을 생략. CSV에 없는 ID만 완료 원문으로 복구하거나 신규 수집. 게시 후 수정·삭제는 자동 감지하지 않음.
-- 반환값은 discovered/skipped/collected/recovered/incomplete 건수 요약. persist=False는 S3 읽기·쓰기를 모두 생략하고 검증 완료 건수를 collected로 반환.
-- CSV는 external_id,completed_at(완료 원문의 S3 LastModified, UTC) 두 열. NoSuchKey만 빈 인덱스로 처리. 손상·권한 오류는 실패.
+- 배치 시작 시 출처별 collected.csv를 읽어 수집이 끝난 ID(완료·영구 실패)를 메모리에 유지. 이 ID는 상세·이미지·post.json 요청을 생략. CSV에 없는 ID만 완료 원문으로 복구하거나 신규 수집. 게시 후 수정·삭제는 자동 감지하지 않음.
+- 반환값은 discovered/skipped/collected/recovered/incomplete/failed 건수와 미완료·영구 실패 ID별 사유(reasons). persist=False는 S3 읽기·쓰기를 모두 생략하고 검증 완료 건수를 collected로 반환.
+- CSV는 external_id,status,recorded_at 세 열. status는 complete(recorded_at은 완료 원문의 S3 LastModified, UTC) 또는 failed(영구 실패 판정 시각, UTC). NoSuchKey만 빈 인덱스로 처리. 헤더 불일치·권한 오류는 실패.
 - 정상 종료 시 새 완료·복구 ID가 있을 때만 CSV를 전체 병합 교체. 기존 ID와 시각 유지. 최초 생성 If-None-Match, 갱신 If-Match 사용. Prefect 재시도는 최신 CSV부터 다시 읽어 병합.
-- post.json은 원문 식별자·필수 이미지 정보·상세 완료 조건 검증 후 복구. CSV에 이미 있는 ID의 원문 유실은 일반 배치에서 감지하지 않음.
-- 상세 확인과 발견 이미지 전체 저장이 완료된 경우에만 post.json 생성. 누락 또는 실패한 글은 다음 실행에서 다시 수집. persist=False는 완료 여부 조회 없이 원문 검증.
+- post.json은 원문 식별자(brand_code, source_key, external_id) 일치를 확인한 뒤 복구. 완료 조건은 post.json을 쓰기 전에 확인하므로 다시 검사하지 않음. CSV에 이미 있는 ID의 원문 유실은 일반 배치에서 감지하지 않음.
+- 상세 확인과 발견 이미지 전체 저장이 완료된 경우에만 post.json 생성. persist=False는 완료 여부 조회 없이 원문 검증.
+- 상세를 확인했고 남은 이미지 실패가 모두 영구 원인(data:·빈 주소, 이미지 HTTP 4xx, 파일 검증·크기 실패)이면 CSV에 failed로 기록하고 다음 실행에서 생략. 상세 실패, 5xx·네트워크 오류가 하나라도 있으면 다음 실행에서 다시 수집. failed 게시물을 다시 수집하려면 CSV에서 해당 행을 지움.
 
 ## 원문과 이미지
 
-- 게시물 JSON: schema_version, brand_id, source_type, source_key, external_id, source_url,
+- 게시물 JSON: schema_version, brand_code, source_type, source_key, external_id, source_url,
   observed_at, raw_content, title, body, published_at_raw, frame_period_raw,
   image_list_complete, images. 미제공 정보는 null, 게시일 미상도 수집.
 - raw_content에는 목록 항목과 상세 본문 HTML을 보존. 요청 쿠키·인증 헤더는 저장하지 않으며 HTML의 스크립트·입력 필드는 제외.
@@ -49,8 +50,8 @@
 
 ## 구현 위치
 
-- `src/neki_workflow/flows/events/collect/photosignature.py:47` `def photosignature_events(`
-- `src/neki_workflow/flows/events/collect/harufilm.py:47` `def harufilm_events(`
-- `src/neki_workflow/flows/events/common/web.py:144` `def collect_posts(`
+- `src/neki_workflow/flows/events/collect/photosignature.py:48` `def photosignature_events(`
+- `src/neki_workflow/flows/events/collect/harufilm.py:48` `def harufilm_events(`
+- `src/neki_workflow/flows/events/common/web.py:151` `def collect_posts(`
 - `src/neki_workflow/flows/events/common/storage.py:25` `def put_object(`
 - `src/neki_workflow/flows/events/common/post.py:17` `class CollectedPost:`

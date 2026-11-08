@@ -8,6 +8,7 @@ from prefect import flow
 
 from neki_workflow.flows.events.common.post import CollectedPost
 from neki_workflow.flows.events.common.web import checked_url, clean_html, collect_posts
+from neki_workflow.flows.stores.common.platform import Platform
 
 LIST_URL = "https://harufilm.com/301/"
 HOSTS = ("harufilm.com", "www.harufilm.com")
@@ -15,7 +16,7 @@ IMAGE_HOSTS = (*HOSTS, "cdn.imweb.me")
 SOURCE_KEY = "harufilm-news"
 
 
-def parse_posts(html: str, brand_id: int, observed_at: str) -> list[CollectedPost]:
+def parse_posts(html: str, observed_at: str) -> list[CollectedPost]:
     """onclick 안의 URL 문자열만 읽는다. 원문 JavaScript는 실행하지 않는다."""
     soup = BeautifulSoup(html, "html.parser")
     posts: dict[str, CollectedPost] = {}
@@ -34,7 +35,7 @@ def parse_posts(html: str, brand_id: int, observed_at: str) -> list[CollectedPos
                 decoration.decompose()
         published = row.select_one(".date")
         posts[external_id] = CollectedPost(
-            brand_id=brand_id, source_key=SOURCE_KEY, external_id=external_id,
+            brand_code=Platform.HARU_FILM, source_key=SOURCE_KEY, external_id=external_id,
             source_url=f"{LIST_URL}?bmode=view&idx={external_id}", observed_at=observed_at,
             raw_content={"listing": clean_html(row), "detail": None},
             title=title.get_text(strip=True) or None if title else None,
@@ -45,12 +46,12 @@ def parse_posts(html: str, brand_id: int, observed_at: str) -> list[CollectedPos
 
 @flow(name="harufilm-events", log_prints=True)
 def harufilm_events(
-    brand_id: int, pages: int = 1, max_posts: int | None = None,
+    pages: int = 1, max_posts: int | None = None,
     persist: bool = True, delay_seconds: float = 1.0,
-) -> dict[str, int]:
+) -> dict[str, int | dict[str, str]]:
     """공지 전체를 수집 대상으로 삼는다. 기간 미표기나 이미지 0장도 제외하지 않는다."""
     return collect_posts(
-        brand_id=brand_id, source_key=SOURCE_KEY, list_url=LIST_URL, source_hosts=HOSTS, image_hosts=IMAGE_HOSTS,
+        source_key=SOURCE_KEY, list_url=LIST_URL, source_hosts=HOSTS, image_hosts=IMAGE_HOSTS,
         parser=parse_posts, detail_selector=".board_txt_area", pages=pages,
         max_posts=max_posts, persist=persist, delay_seconds=delay_seconds,
     )
