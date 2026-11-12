@@ -22,5 +22,6 @@
 | 실행 모델 | `docs/hld/prefect-execution.md` |
 | 배포·스케줄·로컬 UI | `docs/runbook/prefect-local.md`, `docs/runbook.md` |
 | 변경 검증 | `docs/runbook/verification.md`; 수집 검증은 `docs/spec/collect-pipeline.md`의 변경 검증 절 |
+| PR 작성 | `docs/conventions/pull-request.md`. PR을 만들거나 제목·본문을 고치기 전에 읽음 |
 
 정책과 구현 메모가 다르면 spec을 따릅니다.
