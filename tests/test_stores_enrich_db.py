@@ -127,3 +127,19 @@ def test_location_column_is_point_4326(schema):
         assert connection.execute(
             f"SELECT ST_AsEWKT(location) FROM {table.TABLE}"
         ).fetchone() == ("SRID=4326;POINT(127.0276 37.4979)",)
+
+
+def test_location_has_gist_index_after_swap(schema):
+    """서버 지도 V2 의 화면 영역·반경 조회가 전체를 훑지 않도록 현재 세대에 GIST 가 있어야 한다."""
+    table.swap_table.fn([store("1", 127.0276, 37.4979)], cycle=CYCLE)
+
+    with table.connect() as connection:
+        definitions = [
+            row[0]
+            for row in connection.execute(
+                "SELECT indexdef FROM pg_indexes "
+                "WHERE schemaname = current_schema() AND tablename = %s",
+                (table.TABLE,),
+            ).fetchall()
+        ]
+    assert any("USING gist (location)" in d for d in definitions), definitions

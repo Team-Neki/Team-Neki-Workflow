@@ -3,15 +3,15 @@
 # 컨테이너를 내리면 버킷도 사라진다. LocalStack 커뮤니티 판은 상태를 보존하지
 # 않는다. 버킷 생성은 make s3-init 이 맡으므로 재생성 비용은 없다.
 #
-# 4566 은 LocalStack 표준 포트다. 다른 프로젝트가 이미 쓰고 있다면
-# LOCALSTACK_PORT 로 옮기고 .env 의 AWS_ENDPOINT_URL 도 같이 맞춘다.
+# 호스트 포트는 4576, 컨테이너 내부 포트는 4566을 쓴다.
+# 호스트 포트를 바꾸면 .env의 LOCALSTACK_PORT와 AWS_ENDPOINT_URL을 함께 맞춘다.
 
 services:
   localstack:
     image: localstack/localstack:latest
     container_name: neki-localstack
     ports:
-      - "${LOCALSTACK_PORT:-4566}:4566"
+      - "${LOCALSTACK_PORT:-4576}:4566"
     environment:
       # S3만 띄운다. 나머지를 켜면 기동이 느려진다.
       SERVICES: s3

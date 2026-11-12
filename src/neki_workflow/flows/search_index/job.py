@@ -14,7 +14,7 @@ one-shot 계약(BACKEND-128): 인자 --spring.batch.job.name=searchIndexJob 과
 businessDate=<사이클> 로 기동해 잡 하나를 돌리고 종료 코드로 성패를 알린다.
 같은 businessDate 로 다시 돌려도 결과가 같다(멱등). 재시도는 처음부터 다시 돈다.
 
-이미지는 GitOps overlays/prefect/images.env 의 NEKI_BATCH_IMAGE 를 flow run 파드
+이미지는 GitOps 환경별 images.env 의 NEKI_BATCH_IMAGE 를 flow run 파드
 환경변수로 받는다(BACKEND-143). 서버 레포의 deploy-batch 가 그 줄을 갱신한다.
 없으면 로컬이거나 GitOps 가 아직이므로 경고만 남기고 건너뛴다.
 
@@ -27,6 +27,7 @@ import asyncio
 import os
 import re
 from datetime import date
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
@@ -36,7 +37,7 @@ from prefect_kubernetes.jobs import KubernetesJob, KubernetesJobRun
 
 IMAGE_ENV = "NEKI_BATCH_IMAGE"
 
-NAMESPACE = "prefect"
+NAMESPACE_FILE = Path("/var/run/secrets/kubernetes.io/serviceaccount/namespace")
 
 # 배치가 앱 DB 에 붙을 때 쓰는 값이 있는 Secret. flow run 파드가 envFrom 으로
 # 받는 것과 같은 Secret 이다. 통째로 넘기지 않고 필요한 둘만 꺼낸다. batch 파드에
@@ -52,8 +53,30 @@ TIMEOUT_SECONDS = 1800
 # 완료된 Job 을 k8s 가 치우는 시간. 실패 파드의 로그를 볼 여유다.
 FINISHED_JOB_TTL = 86400
 
+# batch 이미지의 JVM heap 상한은 컨테이너 memory limit 의 50% 다 (서버 Dockerfile 의
+# JAVA_TOOL_OPTIONS). limit 이 없으면 노드 메모리의 50% 까지 커지고 request 도 없어
+# 노드의 api 파드와 메모리를 다투므로 묶는다. 지점 1,653건 실측에서 GC 후 heap 은
+# 56MB 였다. 512Mi 면 heap 256MB 로 4배 넘게 남는다. 기동이 CPU 를 많이 써서 CPU
+# limit 은 한 코어로 둔다.
+RESOURCES = {
+    "requests": {"memory": "256Mi", "cpu": "250m"},
+    "limits": {"memory": "512Mi", "cpu": "1000m"},
+}
 
-def manifest(image: str, cycle: date, *, run_at: str) -> dict[str, Any]:
+
+def job_namespace() -> str:
+    """클러스터에서는 현재 파드의 네임스페이스를 사용한다."""
+    if not os.environ.get("KUBERNETES_SERVICE_HOST"):
+        return "prefect"
+    namespace = NAMESPACE_FILE.read_text().strip()
+    if not namespace:
+        raise RuntimeError("service account namespace 파일이 비어 있습니다.")
+    return namespace
+
+
+def manifest(
+    image: str, cycle: date, *, run_at: str, namespace: str | None = None
+) -> dict[str, Any]:
     """Job 매니페스트.
 
     이름이 유일해야 한다. prefect-kubernetes 가 metadata.name 으로 상태를 읽으므로
@@ -69,7 +92,7 @@ def manifest(image: str, cycle: date, *, run_at: str) -> dict[str, Any]:
         "kind": "Job",
         "metadata": {
             "name": name,
-            "namespace": NAMESPACE,
+            "namespace": namespace or job_namespace(),
         },
         "spec": {
             "backoffLimit": 0,
@@ -109,6 +132,7 @@ def manifest(image: str, cycle: date, *, run_at: str) -> dict[str, Any]:
                                     },
                                 },
                             ],
+                            "resources": RESOURCES,
                         }
                     ],
                 }
@@ -142,10 +166,11 @@ def run_search_index(cycle: date, *, run_at: str) -> bool:
         )
         return False
 
+    namespace = job_namespace()
     job = KubernetesJob(
-        v1_job=manifest(image, cycle, run_at=run_at),
+        v1_job=manifest(image, cycle, run_at=run_at, namespace=namespace),
         credentials=KubernetesCredentials(),
-        namespace=NAMESPACE,
+        namespace=namespace,
         timeout_seconds=TIMEOUT_SECONDS,
         delete_after_completion=False,
     )

@@ -117,7 +117,7 @@
 - 하한(800)은 수집 지점만 셈. 관리자 등록 지점이 수집 장애를 가리지 않게 함
 - 테이블이 없으면(서버 마이그레이션 전) 경고 후 수집 지점만으로 진행함
 
-구현 : `src/neki_workflow/flows/stores/enrich/table.py:191` `def read_manual`,
+구현 : `src/neki_workflow/flows/stores/enrich/table.py:193` `def read_manual`,
 `src/neki_workflow/flows/stores/enrich/region.py:126` `def from_manual`,
 `src/neki_workflow/flows/stores/enrich/region.py:41` `MANUAL_IDX_PREFIX`,
 `src/neki_workflow/flows/stores/enrich/flow.py:99` `def _read_manual`
@@ -154,14 +154,18 @@ index 가 읽는 현재 세대입니다. 세대 교체는 `tb_legal_dong` 과 �
 - `source_type` 으로 수집 지점과 관리자 등록 지점을 구분함. stores-sync 는 이 값을 그대로
   지점 마스터의 `source_type` 으로 씀 (`docs/spec/stores-sync.md`). 이 열이 없는 직전 세대는 재사용하지 않으므로
   배포 직후 첫 실행은 전 지점을 Kakao 에 물음
+- 인덱스는 COPY 뒤 스왑 전에 staging 에 건다. `b_code` (index 가 법정동으로 부스를 모을 때)와
+  `location` GIST (서버 지도 V2 가 화면 영역·반경으로 부스를 찾을 때, BACKEND-250) 둘.
+  세대마다 새 테이블이라 서버 Flyway 가 아니라 여기서 걸어야 다음 세대에도 남음
 - 시각 컬럼은 시간대 없는 `TIMESTAMP` 에 KST 벽시계
 - BACKEND-114 의 `tb_temp_photo_booth` 와 별도 테이블. enrich 는 S3 를 읽으므로
   그쪽을 기다리지 않음
 
 구현 : `src/neki_workflow/flows/stores/enrich/table.py:38` `TABLE`,
-`src/neki_workflow/flows/stores/enrich/table.py:225` `def swap_table`,
-`src/neki_workflow/flows/stores/enrich/table.py:162` `def read_current`,
+`src/neki_workflow/flows/stores/enrich/table.py:227` `def swap_table`,
+`src/neki_workflow/flows/stores/enrich/table.py:164` `def read_current`,
 `src/neki_workflow/flows/stores/enrich/table.py:94` `def _row`,
+`src/neki_workflow/flows/stores/enrich/table.py:134` `def _indexes`,
 `src/neki_workflow/flows/stores/enrich/flow.py:48` `MIN_EXPECTED`
 
 ## 색인은 별도 flow 가 띄운다
@@ -183,11 +187,16 @@ enrich 가 끝나도 색인 Job 을 띄우지 않습니다. 묶으면 enrich 재
   관리자 등록 지점(`manual`), 법정동 코드를 못 붙인 지점(`no_bcode`). `s3` 와
   `enriched` 가 다르면 `(platform, idx)` 중복으로 버린 것
 - `failed` 로 빠진 브랜드와 `stale` 로 대신한 브랜드, `tb_legal_dong` 에 없는 코드를 경고로 붙임
+- 직전 세대에 있었는데 이번 적재에 없는 지점을 `(platform, idx)` 로 가려 브랜드별 건수와
+  지점 이름으로 붙임. 직전 세대는 재사용 판정에 쓰려고 이미 읽은 것(`read_current`)이라
+  DB 를 더 읽지 않음. 브랜드가 통째로 빠지면 수백 건이라 브랜드마다 이름은 10개까지만
+  보이고 나머지는 `외 N건`. 직전 세대를 읽지 못했으면(첫 적재, 컬럼이 다른 세대) 비교하지 않음
 - **알림 실패로 flow 를 실패시키지 않음.** 알림은 적재 커밋 뒤에 불리고, 발송·본문 조립의 어떤 예외도 경고로만 남김. 새면 이미 끝난 적재가 실패로 기록되고 재시도가 적재를 되풀이함
 
 구현 : `src/neki_workflow/flows/common/discord.py:53` `def notify`,
 `src/neki_workflow/flows/common/discord.py:96` `def notify_failure`,
-`src/neki_workflow/flows/stores/enrich/flow.py:120` `def _report`
+`src/neki_workflow/flows/stores/enrich/flow.py:120` `def _report`,
+`src/neki_workflow/flows/stores/enrich/flow.py:195` `def _removed`
 
 ## 외부 의존과 장애
 

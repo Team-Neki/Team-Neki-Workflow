@@ -29,7 +29,7 @@ deployment의 `paused` 대신 스케줄의 `active`를 꺼도 마찬가지로 �
 `deploy()`가 cron 인자를 그대로 다시 쓰므로 스케줄 객체가 통째로 교체되기
 때문입니다.
 
-`deploy.py`는 배포 전 `paused`와 각 스케줄의 `active`를 읽어두고 등록 후 되돌려
+`deploy.py`는 배포 전 `paused`와 각 스케줄의 `active`를 읽어두고 등록 payload 에 반영해
 이를 막습니다. 반대로 UI에서 다시 켠 것을 배포가 도로 끄지도 않습니다. 이 파일을
 수정할 때는 양방향이 모두 유지되는지 확인해야 합니다.
 ## 로컬 UI

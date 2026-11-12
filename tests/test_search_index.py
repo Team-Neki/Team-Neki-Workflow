@@ -6,7 +6,8 @@ import re
 import pytest
 
 from neki_workflow.deployments.search_index import build
-from neki_workflow.flows.search_index.job import TIMEOUT_SECONDS, manifest
+from neki_workflow.flows.search_index import job
+from neki_workflow.flows.search_index.job import RESOURCES, TIMEOUT_SECONDS, manifest
 
 
 def test_manifest_name_is_a_valid_k8s_name_and_args_follow_the_contract():
@@ -26,6 +27,8 @@ def test_manifest_name_is_a_valid_k8s_name_and_args_follow_the_contract():
         "SPRING_PROFILES_ACTIVE",
         "JASYPT_PASSWORD",
     }
+    assert container["resources"] == RESOURCES
+    assert container["resources"]["limits"]["memory"] == "512Mi"
 
 
 def test_same_second_runs_get_distinct_job_names():
@@ -46,3 +49,16 @@ def test_deployment_is_serial():
     deployment = build()
     assert deployment.name == "search-index"
     assert deployment.concurrency_limit == 1
+
+
+def test_staging_batch_job_uses_its_pod_namespace(tmp_path, monkeypatch):
+    namespace_file = tmp_path / "namespace"
+    namespace_file.write_text("prefect-stg\n")
+    monkeypatch.setattr(job, "NAMESPACE_FILE", namespace_file)
+    monkeypatch.setenv("KUBERNETES_SERVICE_HOST", "kubernetes.default.svc")
+    m = manifest("image", date(2026, 9, 25), run_at="2026-09-25_053012")
+    assert m["metadata"]["namespace"] == "prefect-stg"
+
+    namespace_file.unlink()
+    with pytest.raises(FileNotFoundError):
+        manifest("image", date(2026, 9, 25), run_at="2026-09-25_053012")

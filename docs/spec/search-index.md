@@ -40,8 +40,13 @@ businessDate=<사이클>` 인자로 k8s Job 에 띄우고 완료를 기다립니
 flow 실패입니다. 환경변수가 없으면 경고 후 끝납니다. 로컬이거나 GitOps 가 아직인
 경우입니다.
 
-- 이미지는 GitOps `overlays/prefect/images.env` (ConfigMap `neki-images`, BACKEND-143).
-  Team-Neki-Server 의 deploy-batch 가 그 줄을 갱신함
+- 이미지는 GitOps 의 환경별 `overlays/prefect/images.env` 또는
+  `overlays/prefect-stg/images.env` (ConfigMap `neki-images`, BACKEND-143).
+  Team-Neki-Server 의 deploy-batch 가 선택한 환경의 줄을 갱신함
+- Job 은 flow run 과 같은 Kubernetes 네임스페이스에 만듭니다. 클러스터 안에서는
+  service account 의 namespace 파일을 읽고, 파일을 읽지 못하면 실패합니다. 로컬
+  매니페스트 확인에서만 `prefect` 를 기본값으로 씁니다. 같은 네임스페이스의
+  `prefect-workflow` Secret 을 참조하므로 staging 과 prod 의 DB 접속 정보가 섞이지 않습니다.
 - Job 이름은 `search-index-<실행 시각>-<UUID hex>`. 같은 초의 실행도 다른 이름입니다.
   prefect-kubernetes 가 `metadata.name` 으로 상태를 읽으므로 `generateName` 은 못 씁니다.
   실행 시각은 YYYY-MM-DD_HHMMSS 형식만 허용하고 밑줄을 하이픈으로 바꿉니다.
@@ -60,13 +65,20 @@ flow 실패입니다. 환경변수가 없으면 경고 후 끝납니다. 로컬�
   concurrency 슬롯이 비므로, 남은 Job 이 계속 돌면 재실행한 Job 과 겹칩니다.
   같은 상한에서 k8s 가 파드를 끝냅니다. swap 도중에 끝나도 트랜잭션이 롤백돼
   서빙 중 테이블은 그대로입니다
+- 컨테이너 리소스는 requests `256Mi`/`250m`, limits `512Mi`/`1000m`. batch 이미지의
+  JVM heap 상한은 memory limit 의 50% (서버 Dockerfile 의 `JAVA_TOOL_OPTIONS`,
+  BACKEND-219) 라서, limit 이 없으면 노드 메모리의 50% 까지 커지고 request 도 없어
+  같은 노드의 api 파드와 메모리를 다툼. 512Mi 면 heap 은 256MB. 지점 1,653건 실측에서
+  GC 후 heap 은 56MB 였고 cgroup 최대 사용량은 366MB. 웹 서버가 없는 one-shot 이라
+  api 파드(1Gi)만큼 두지 않음. CPU limit 은 기동이 CPU 를 많이 써서 한 코어
 - flow run 파드는 SA `prefect-worker`. base job template 기본값이라 deployment 는
   지정하지 않음. Role 이 jobs 생성과 pods/log 조회를 허용함
 
-구현 : `src/neki_workflow/flows/search_index/job.py:37` `IMAGE_ENV`,
-`src/neki_workflow/flows/search_index/job.py:56` `def manifest`,
-`src/neki_workflow/flows/search_index/job.py:120` `async def _wait_for_completion`,
-`src/neki_workflow/flows/search_index/job.py:127` `def run_search_index`
+구현 : `src/neki_workflow/flows/search_index/job.py:38` `IMAGE_ENV`,
+`src/neki_workflow/flows/search_index/job.py:61` `RESOURCES`,
+`src/neki_workflow/flows/search_index/job.py:77` `def manifest`,
+`src/neki_workflow/flows/search_index/job.py:144` `async def _wait_for_completion`,
+`src/neki_workflow/flows/search_index/job.py:151` `def run_search_index`
 
 ## 외부 의존과 장애
 
@@ -82,7 +94,7 @@ flow 실패입니다. 환경변수가 없으면 경고 후 끝납니다. 로컬�
 
 - `make check` : 임포트, deployment 수집, anchor, pytest (매니페스트 이름과 인자)
 - 로컬 `make search-index` 는 `NEKI_BATCH_IMAGE` 가 없어 경고 후 끝나는 것이 정상
-- staging 에서 `search-index` 를 수동 실행해 `kubectl -n prefect get jobs` 에
+- staging 에서 `search-index-stg` 를 수동 실행해 `kubectl -n prefect-stg get jobs` 에
   `search-index-<시각>` 이 생기고 flow 로그에 batch 파드 로그가 보이는지 봄
 
 ## 정리

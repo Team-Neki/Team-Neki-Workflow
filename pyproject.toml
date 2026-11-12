@@ -35,3 +35,7 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/neki_workflow"]
+
+[tool.pytest.ini_options]
+# deploy.py 는 src 밖 루트 스크립트라 tests 가 import 하려면 루트를 경로에 둔다.
+pythonpath = ["."]
