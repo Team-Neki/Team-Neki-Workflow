@@ -6,7 +6,7 @@ from unittest.mock import Mock
 import httpx
 import pytest
 
-from flows.common import discord
+from neki_workflow.flows.common import discord
 
 
 @pytest.fixture

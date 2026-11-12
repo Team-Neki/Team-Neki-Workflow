@@ -19,8 +19,8 @@ import psycopg
 import pytest
 from psycopg import sql
 
-from flows.stores_enrich import table
-from flows.stores_enrich.region import EnrichedStore
+from neki_workflow.flows.stores.enrich import table
+from neki_workflow.flows.stores.enrich.region import EnrichedStore
 
 CYCLE = date(2026, 10, 12)
 NOW = datetime(2026, 10, 12, 5, 0)

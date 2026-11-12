@@ -9,9 +9,9 @@ from unittest.mock import Mock
 
 import pytest
 
-from flows.common import storage
+from neki_workflow.flows.stores.common import storage
 
-flow_module = importlib.import_module("flows.stores_enrich.flow")
+flow_module = importlib.import_module("neki_workflow.flows.stores.enrich.flow")
 CYCLE = date(2026, 9, 25)
 
 

@@ -8,7 +8,7 @@ from prefect.client.schemas.actions import DeploymentScheduleCreate
 from prefect.client.schemas.schedules import CronSchedule
 
 import deploy
-from deployments.search_index import build
+from neki_workflow.deployments.search_index import build
 
 
 @pytest.mark.parametrize("environment", ["prod", "stg"])
