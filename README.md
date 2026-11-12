@@ -230,6 +230,7 @@ cp .env.example .env
 ### 로컬 S3
 
 수집 결과를 적재하려면 S3가 필요합니다. 로컬은 LocalStack을 씁니다.
+Docker를 실행하고, 저장소 루트에 `.env.example`을 복사한 `.env`를 준비합니다.
 
 ```bash
 make localstack
@@ -247,16 +248,32 @@ make localstack
   `AWS_DEFAULT_REGION`을 파드 환경변수로 넣고 boto3 기본 자격증명 체인이 집어감
 
 ```text
-AWS_PROFILE=neki-local   ->  http://localhost:4566
+AWS_PROFILE=neki-local   ->  http://localhost:4576
 운영 (환경변수)          ->  https://s3.ap-northeast-2.amazonaws.com
 ```
 
 `aws/config`에 있는 키는 LocalStack이 검증하지 않는 더미라 커밋되어 있습니다.
 실제 자격증명은 이 파일에 두지 않습니다.
 
-LocalStack 표준 포트는 4566입니다. 다른 프로젝트가 이미 쓰고 있다면 `.env`의
-`LOCALSTACK_PORT`와 `AWS_ENDPOINT_URL`을 같이 옮깁니다. `AWS_ENDPOINT_URL`은
-프로파일의 `endpoint_url`보다 우선합니다.
+호스트 포트는 **4576**, 컨테이너 내부 포트는 4566입니다. 다른 프로젝트가 호스트
+포트를 이미 쓰고 있다면 `.env`의 `LOCALSTACK_PORT`와 `AWS_ENDPOINT_URL`을 함께
+변경합니다. `AWS_ENDPOINT_URL`은 프로파일의 `endpoint_url`보다 우선합니다.
+
+```dotenv
+AWS_CONFIG_FILE=aws/config
+AWS_PROFILE=neki-local
+S3_BUCKET=team-neki-workflow-local
+LOCALSTACK_PORT=4576
+AWS_ENDPOINT_URL=http://localhost:4576
+```
+
+`make`는 `.env`를 읽습니다. 직접 실행할 때는 `uv run --env-file .env ...`로
+지정합니다. 로컬 버킷 생성과 저장된 객체 확인은 다음 명령으로 수행합니다.
+
+```bash
+make s3-init
+make s3-ls
+```
 
 ### 워크플로 실행
 
