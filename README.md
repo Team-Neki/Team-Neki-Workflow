@@ -449,3 +449,60 @@ UI에서 꺼둔 스케줄이 배포할 때마다 되살아납니다. Airflow에�
 
 **따라서 운영 스케줄 등록은 반드시 `deploy.py`를 거쳐야 합니다.** `prefect deploy`나
 `flow.deploy()`를 직접 호출하면 보존 로직을 건너뛰어 꺼둔 스케줄이 되살아납니다.
+
+## 브랜드 소식 수집 (events)
+
+정책은 `docs/spec/events-collect.md`, 상위 설계는
+[Sprint HLD](https://sprint.suitestudy.com:4641/wiki/cmve1qomb005hka01j1l6xpm9)입니다.
+포토시그니처 프레임과 하루필름 공지를 `flows/events/collect/`에서 수집합니다.
+OCR·기간 판정·운영 DB 반영은 후속 enrich의 책임입니다.
+
+- 브랜드: 실행 인자 없음. 출처 모듈이 `Platform` 값(`tb_brand.code`)을 원문 `brand_code`에 기록. 운영 `brand_id` 변환은 enrich 책임
+- `pages`: 수집할 목록 페이지 수, 기본 1. 전체 이력 수집을 보장하지 않음
+- `max_posts`: 로컬 확인용 게시물 수 제한, 기본 제한 없음
+- `persist=False`: S3 쓰기 없이 원문·이미지 다운로드와 검증 수행
+- 수동 deployment: `photosignature-events`, `harufilm-events`. cron 없음
+
+```bash
+make photosignature-events
+make harufilm-events
+```
+
+### 로컬 S3 저장 (LocalStack)
+
+로컬 `.env`는 `.env.example`의 `neki-local` 프로파일을 사용합니다.
+`AWS_ENDPOINT_URL=http://localhost:4576`, `LOCALSTACK_PORT=4576`,
+`S3_BUCKET=team-neki-workflow-local`을 서로 맞춥니다. Docker가 실행 중이어야 합니다.
+수집 코드의 환경 분기 없이 boto3가 이 설정으로 LocalStack에 연결합니다.
+
+```bash
+# .env가 없다면 .env.example을 복사해 준비
+make localstack
+
+make photosignature-events
+make harufilm-events
+make s3-ls
+```
+
+`make` 명령은 `.env`를 읽습니다. Python을 직접 실행할 때는
+`uv run --env-file .env`를 사용해야 같은 LocalStack 설정이 적용됩니다.
+로컬에서 소량만 확인하려면 flow 인자에 `max_posts=1, persist=True`를 지정합니다.
+`make localstack-down`으로 컨테이너를 삭제하면 로컬 버킷 데이터도 사라집니다.
+
+기존 `S3_BUCKET`·AWS 자격증명을 사용하며 DB 접속은 필요하지 않습니다.
+게시물별 `events/raw/<출처>/<게시물 ID>/`에 원문 JSON과 `images/<해시>.<확장자>`를
+저장합니다. 상세 확인과 이미지 저장이 모두 끝나면 `post.json`을 남깁니다.
+수집이 끝난 ID는 출처별 `collected.csv`(`external_id,status,recorded_at`)에 모아
+배치 시작 시 한 번 읽습니다. `status`는 완료(`complete`) 또는 영구 실패(`failed`)입니다.
+CSV에 있는 ID는 상세·이미지·완료 원문 조회를 생략하고, 없는 ID만 `post.json`으로
+복구하거나 신규 수집합니다. 배치 종료 시 새 ID를 조건부 병합 저장합니다.
+flow는 `discovered`, `skipped`, `collected`, `recovered`, `incomplete`, `failed` 건수와
+미완료·영구 실패 ID별 사유 `reasons`를 반환합니다.
+갱신·복구 상세는 [CSV 완료 인덱스 LLD](docs/lld/events-web-collect.md)에 있습니다.
+5xx·네트워크 오류로 미완료된 게시물은 다음 실행에서 다시 수집합니다. `data:` 주소·이미지 4xx·
+파일 검증 실패만 남은 게시물은 영구 실패로 기록해 생략하며, 다시 수집하려면 CSV에서
+해당 행을 지웁니다. 완료된 게시물의 수정·삭제는 자동 감지하지 않습니다.
+
+이미지 검증은 Pillow로 수행합니다. HTTP 오류 페이지나 손상된 파일은 이미지로
+저장하지 않습니다. 개별 파일 실패는 URL·원문 순서와 함께 남기고, 차단 응답은
+해당 출처 수집을 중단합니다. 보존 기간·정기 실행 주기는 아직 적용하지 않습니다.

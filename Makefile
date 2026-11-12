@@ -22,6 +22,7 @@ endif
 PREFECT_ENV = PREFECT_API_URL=$(API_URL)
 
 .DEFAULT_GOAL := help
+.PHONY: photosignature-events harufilm-events
 .PHONY: help setup check spec-check hello lifefourcuts photoism dontlxxkup photosignature \
 	photogray planbstudio picdot monomansion harufilm photolabplus broomstudio \
 	collect enrich stores-sync stores-sync-dry-run test-stores-sync-db search-index legal-dong subway-station localstack localstack-down s3-init s3-ls \
@@ -222,3 +223,9 @@ build: ## wheel을 빌드하고 포함된 패키지를 확인한다
 clean: ## 빌드 산출물과 캐시를 지운다
 	rm -rf dist build *.egg-info
 	find . -type d -name __pycache__ -not -path './.venv/*' -exec rm -rf {} +
+
+photosignature-events: ## 포토시그니처 브랜드 소식 원문과 이미지를 S3에 저장한다
+	$(UV) run python -c "from neki_workflow.flows.events.collect.photosignature import photosignature_events; photosignature_events()"
+
+harufilm-events: ## 하루필름 브랜드 소식 원문과 이미지를 S3에 저장한다
+	$(UV) run python -c "from neki_workflow.flows.events.collect.harufilm import harufilm_events; harufilm_events()"

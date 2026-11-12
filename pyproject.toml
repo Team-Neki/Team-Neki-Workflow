@@ -21,6 +21,8 @@ dependencies = [
     # (prefecthq/prefect:3.8.5-*-kubernetes)에 든 것과 같은 버전이어야 한다.
     # 다르면 이미지 안의 prefect-kubernetes 가 교체되어 worker 가 깨진다.
     "prefect-kubernetes==0.7.12",
+    # 브랜드 소식 이미지의 실제 파일 형식과 손상 여부를 검증한다.
+    "pillow>=11.0",
 ]
 
 [dependency-groups]
