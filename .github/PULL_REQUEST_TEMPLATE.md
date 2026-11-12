@@ -1,6 +1,6 @@
 <!--
 작성 기준: docs/conventions/pull-request.md
-제목은 커밋 규약과 같게 씁니다.  feat: 포토이즘 지점 목록 수집 flow 추가 (BACKEND-90)
+제목은 커밋 제목과 같은 형식으로 씁니다.  feat: 포토이즘 지점 목록 수집 flow 추가 (BACKEND-90)
 -->
 
 ## 배경
