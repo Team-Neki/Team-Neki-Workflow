@@ -13,7 +13,7 @@ b_code 일곱 열이다. 나머지는 운영 확인용이라 바꿔도 index 를
 관리자 등록 지점(tb_photo_booth_manual)도 같은 테이블에 source_type = MANUAL 로
 함께 담는다(read_manual). index 는 수집 지점과 구분하지 않고 같은 규칙으로 카드를 만든다.
 
-좌표는 tb_photo_booth_location, tb_subway_station 과 같은 모양으로
+좌표는 tb_subway_station 과 같은 모양으로
 location geometry(Point, 4326) 하나에 담는다(BACKEND-244). EnrichedStore 는 경도와
 위도 두 필드 그대로 두고, COPY 할 때 EWKT 로 합치고(_row) 직전 세대를 읽을 때
 ST_X / ST_Y 로 되돌린다(_SELECT). 판정 코드는 좌표 모양을 모른다.

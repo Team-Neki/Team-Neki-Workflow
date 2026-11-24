@@ -144,7 +144,7 @@ index 가 읽는 현재 세대입니다. 세대 교체는 `tb_legal_dong` 과 �
 - index 와의 계약은 `platform`, `idx`, `name`, `address`, `location`, `source_dt`,
   `b_code` 일곱 열. `b_code` 가 NULL 인 행도 남김. 관리자 등록 지점도 같은 일곱 열로
   담겨 index 는 구분 없이 카드를 만듦
-- 좌표는 `tb_photo_booth_location`, `tb_subway_station` 과 같은 모양인
+- 좌표는 `tb_subway_station` 과 같은 모양인
   `location geometry(Point, 4326)` 하나로 담음 (BACKEND-244). 경도나 위도가 없거나
   유한하지 않으면 NULL. `EnrichedStore` 는 경도·위도 두 필드 그대로이고 COPY 할 때
   EWKT 로 합치며, 직전 세대를 읽을 때 `ST_X` / `ST_Y` 로 되돌림. 이 열이 없는 직전
