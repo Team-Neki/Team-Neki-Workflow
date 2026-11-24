@@ -61,7 +61,7 @@ def _ddl(staging: str) -> str:
     경춘선이 매달려 있어 부딪히고, 그것으로 키를 잡으면 `광운대 경춘선` 이 검색에서
     사라진다.
 
-    위경도를 컬럼으로 두지 않는 것은 `tb_photo_booth_location` 이 `location` 하나만
+    위경도를 컬럼으로 두지 않는 것은 `tb_photo_booth_enriched` 가 `location` 하나만
     들고 있어서다. 반경 계산에서 두 테이블을 섞어 쓰는데 한쪽만 타입이 다르면 변환이
     끼고, 변환이 끼면 인덱스가 죽는다.
     """

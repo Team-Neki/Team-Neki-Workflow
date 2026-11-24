@@ -14,7 +14,6 @@
 |---|---|
 | 지점 수집(collect) | `docs/spec/collect-pipeline.md`, `docs/lld/pipeline-notes.md`의 수집 절 |
 | 지점 보강(enrich) | `docs/spec/enrich-pipeline.md`, `docs/lld/pipeline-notes.md`의 보강 절 |
-| 지점 동기화(stores-sync) | `docs/spec/stores-sync.md` |
 | 검색 색인(search-index) | `docs/spec/search-index.md`, `docs/lld/pipeline-notes.md`의 검색 색인 절 |
 | 법정동 | `docs/lld/legal-dong.md` |
 | 지하철 역 | `docs/lld/subway-station.md` |

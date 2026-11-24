@@ -110,7 +110,7 @@
 - `platform` 은 브랜드의 `tb_brand.code`. 서버 색인이 그 값으로 브랜드를 찾음.
   수집하지 않는 브랜드의 지점도 담음 (BACKEND-228 전에는 `tb_brand.platform` 이 없는 브랜드를 뺐음)
 - `idx` 는 `manual-<id>`. 사이트 idx 와 겹치지 않게 접두를 붙임. 겹치면 수집 지점을 남김
-- `source_type` 은 수집 지점 `COLLECTED`, 관리자 등록 지점 `MANUAL`. 지점 마스터와 같은 어휘
+- `source_type` 은 수집 지점 `COLLECTED`, 관리자 등록 지점 `MANUAL`
 - `source_dt` 는 이번 사이클, `collected_at` 은 관리자가 마지막으로 고친 시각(`updated_at`),
   `coordinate_source` 는 `manual`
 - 이름은 수집 지점과 같이 앞머리 브랜드 표기만 통일함
@@ -144,15 +144,14 @@ index 가 읽는 현재 세대입니다. 세대 교체는 `tb_legal_dong` 과 �
 - index 와의 계약은 `platform`, `idx`, `name`, `address`, `location`, `source_dt`,
   `b_code` 일곱 열. `b_code` 가 NULL 인 행도 남김. 관리자 등록 지점도 같은 일곱 열로
   담겨 index 는 구분 없이 카드를 만듦
-- 좌표는 `tb_photo_booth_location`, `tb_subway_station` 과 같은 모양인
+- 좌표는 `tb_subway_station` 과 같은 모양인
   `location geometry(Point, 4326)` 하나로 담음 (BACKEND-244). 경도나 위도가 없거나
   유한하지 않으면 NULL. `EnrichedStore` 는 경도·위도 두 필드 그대로이고 COPY 할 때
   EWKT 로 합치며, 직전 세대를 읽을 때 `ST_X` / `ST_Y` 로 되돌림. 이 열이 없는 직전
   세대(경도·위도 두 열)는 재사용하지 않으므로 배포 직후 첫 실행은 전 지점을 Kakao 에 물음
   왕복이 원래 float 와 같아야 재사용이 되므로 `tests/test_stores_enrich_db.py` 가 실제
-  PostGIS 로 확인함 (`make test-stores-sync-db`)
-- `source_type` 으로 수집 지점과 관리자 등록 지점을 구분함. stores-sync 는 이 값을 그대로
-  지점 마스터의 `source_type` 으로 씀 (`docs/spec/stores-sync.md`). 이 열이 없는 직전 세대는 재사용하지 않으므로
+  PostGIS 로 확인함 (`make test-enrich-db`)
+- `source_type` 으로 수집 지점과 관리자 등록 지점을 구분함. 이 열이 없는 직전 세대는 재사용하지 않으므로
   배포 직후 첫 실행은 전 지점을 Kakao 에 물음
 - 인덱스는 COPY 뒤 스왑 전에 staging 에 건다. `b_code` (index 가 법정동으로 부스를 모을 때)와
   `location` GIST (서버 지도 V2 가 화면 영역·반경으로 부스를 찾을 때, BACKEND-250) 둘.

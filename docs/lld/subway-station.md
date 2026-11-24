@@ -73,7 +73,7 @@ COPY 순서로 매겨지는데, 원문 앞쪽에 역이 하나 생기면 그 뒤
 ### 좌표는 부스 테이블과 같은 모양으로 담습니다
 
 위경도를 컬럼으로 두지 않고 `location geometry(POINT, 4326)` 하나로 담습니다.
-`tb_photo_booth_location`이 이미 그렇게 하고 `ST_X` / `ST_Y`로 돌려줍니다. PostGIS 는
+`tb_photo_booth_enriched`가 이미 그렇게 하고 `ST_X` / `ST_Y`로 돌려줍니다. PostGIS 는
 Team-Neki-Server 의 Flyway 가 이미 들여놓았습니다.
 
 반경 계산에서 두 테이블을 섞어 쓰는데 한쪽만 타입이 다르면 변환이 끼고, **변환이
