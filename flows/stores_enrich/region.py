@@ -67,8 +67,8 @@ class EnrichedStore:
     coordinate_source: str | None
     collected_at: datetime
     source_dt: date
-    # COLLECTED 수집 지점 / MANUAL 관리자 등록 지점(tb_photo_booth_manual). 값은 지점
-    # 마스터(tb_photo_booth_location.source_type)와 같은 어휘다.
+    # COLLECTED 수집 지점 / MANUAL 관리자 등록 지점(tb_photo_booth_manual). 하한 검사는
+    # 이 값으로 수집 지점만 센다.
     source_type: SourceType
 
     # enrich 가 더하는 것

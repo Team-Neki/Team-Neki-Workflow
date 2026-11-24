@@ -4,7 +4,7 @@
 원래 float 를 그대로 돌려줘야 한다. 깨져도 실패하지 않고 재사용이 0건이 되어 매일
 전 지점을 Kakao 에 물으므로 실제 PostGIS 로 확인한다.
 
-STORES_SYNC_TEST_DATABASE_URL을 명시해야 실행한다(test_stores_sync_db 와 같은 DB).
+ENRICH_TEST_DATABASE_URL을 명시해야 실행한다.
 앱 DATABASE_URL은 읽지 않는다.
 """
 
@@ -24,7 +24,7 @@ from flows.stores_enrich.region import EnrichedStore
 
 CYCLE = date(2026, 10, 12)
 NOW = datetime(2026, 10, 12, 5, 0)
-TEST_DSN = os.environ.get("STORES_SYNC_TEST_DATABASE_URL")
+TEST_DSN = os.environ.get("ENRICH_TEST_DATABASE_URL")
 pytestmark = pytest.mark.skipif(
     not TEST_DSN, reason="전용 PostGIS 테스트 DB가 지정되지 않았습니다"
 )
