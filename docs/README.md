@@ -10,6 +10,7 @@ flowchart TD
     A --> L["docs/lld/ · 구현 설계와 함정"]
     A --> R["docs/runbook/ · 개발·검증 절차"]
     R --> O["docs/runbook.md · 운영 배포와 장애 대응"]
+    A --> C["docs/conventions/ · PR 작성 기준"]
     P["docs/superpowers/plans/ · 과거 작업 계획"] --> S
     D["docs/superpowers/specs/ · 과거 설계 기록"] --> S
 ```
