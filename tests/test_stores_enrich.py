@@ -6,9 +6,9 @@ from datetime import date, datetime
 
 import pytest
 
-from flows.stores_enrich import region, table
-from flows.stores_enrich.name import unify_brand
-from flows.stores_enrich.region import (
+from neki_workflow.flows.stores.enrich import region, table
+from neki_workflow.flows.stores.enrich.name import unify_brand
+from neki_workflow.flows.stores.enrich.region import (
     EnrichedStore,
     from_collect,
     from_manual,

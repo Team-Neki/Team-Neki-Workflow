@@ -9,7 +9,7 @@ import pytest
 import prefect_kubernetes.jobs as kubernetes_jobs
 from prefect_kubernetes.jobs import KubernetesJob, KubernetesJobRun
 
-from flows.search_index import job
+from neki_workflow.flows.search_index import job
 
 
 def test_no_pods_wait_times_out_and_is_cancelled(monkeypatch):

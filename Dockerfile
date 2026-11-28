@@ -14,13 +14,11 @@ RUN --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
     && uv pip install --system --no-cache -r /tmp/requirements.txt \
     && rm /tmp/requirements.txt
 
-# to_deployment() 의 entrypoint 가 cwd 기준 상대경로(flows/<name>/flow.py:<fn>)라
-# worker 와 Job 모두 여기서 실행돼야 한다. PYTHONPATH 는 prefect CLI 로 띄울 때도
-# flows 를 찾게 한다. 파일은 root 소유 644 라 uid 1001 이 읽을 수 있다.
-COPY deployments/ deployments/
-COPY flows/ flows/
+# to_deployment() 의 entrypoint 가 cwd 기준 상대경로이므로 worker 와 Job 모두
+# 여기서 실행한다. 소스를 복사해 Python 이 패키지를 찾게 한다.
+COPY src/ src/
 COPY deploy.py ./
-ENV PYTHONPATH=/opt/prefect
+ENV PYTHONPATH=/opt/prefect/src
 
 # 이미지가 자기 참조를 알아야 deploy.py 가 Job 파드 이미지를 같은 태그로 지정한다.
 ARG IMAGE_REF

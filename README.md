@@ -4,21 +4,24 @@
 
 ## 디렉토리 구조
 
-워크플로 하나가 디렉토리 하나입니다. `@flow`와 `@task`를 같은 디렉토리에 두되
-파일은 나눕니다. 스케줄만 따로 모읍니다.
+도메인별로 워크플로와 배포 설정을 묶습니다. 지점은 `stores` 아래에서
+collect, enrich, sync 로 나눕니다. 브랜드별 지점 수집기는 collect 아래에 둡니다.
+로컬은 `uv sync`의 editable 설치로, 운영 이미지는 `PYTHONPATH=/opt/prefect/src`로
+`neki_workflow` 패키지를 찾습니다.
 
 ```text
-deployments/              언제 돌리나
-  daily_sync.py           build()
-flows/
-  daily_sync/             무엇을 어떤 순서로 + 실제로 하는 일
-    __init__.py           flow 재노출
-    flow.py               @flow
-    orders.py             @task
-  stores_enrich/          법정동 보강. collect 의 최신 CSV 를 읽어 Kakao 로 b_code 를 붙임
-  stores_sync/            지점 마스터 동기화. 원천 키로 locationId 유지, 수동 보정 보존
-  search_index/           검색 색인. 서버 batch 의 색인 잡을 k8s Job 으로 띄움
-  common/                 여러 워크플로가 함께 쓰는 task
+src/neki_workflow/
+  deployments/
+    stores/               지점 배포 설정: collect, 브랜드별 단독 실행, enrich, sync
+    search_index.py       검색 색인 배포 설정
+  flows/
+    stores/
+      collect/             지점 수집 총괄과 브랜드별 수집기
+      enrich/              법정동 보강
+      sync/                지점 마스터 동기화
+      common/              지점 스키마·적재·수집 공통 코드
+    search_index/          검색 색인 Job 실행
+    common/                도메인 공통 DB 연결·알림
 aws/config                로컬 개발용 AWS 프로파일
 compose.yaml              로컬 S3 (LocalStack)
 serve.py                  로컬 개발용 - 한 프로세스로 서빙
@@ -36,10 +39,10 @@ tests/                    순수 판정 테스트. make check 가 돌림
 의존 방향은 단방향입니다.
 
 ```text
-deployments/  ->  flows/<name>/flow.py  ->  flows/<name>/<task 모듈>
+src/neki_workflow/deployments/  ->  src/neki_workflow/flows/<도메인>/<작업>/flow.py  ->  task 모듈
 ```
 
-`flows/`는 스케줄을 모르고, 워크플로 안에서 task 모듈은 `flow.py`를 import하지
+`src/neki_workflow/flows/`는 스케줄을 모르고, 워크플로 안에서 task 모듈은 `flow.py`를 import하지
 않습니다. 이 방향이 깨지면 분리의 의미가 없어집니다.
 
 ## 실행 모델
@@ -113,18 +116,21 @@ k8s Job 으로 만들고 종료 코드를 flow 결과로 삼습니다. 정책은
 - deployment name : kebab-case (e.g. `"daily-sync"`, `"daily-sync-backfill"`)
 - task 함수 : 동사로 시작 (e.g. `fetch_orders`, `upload_report`)
 
-`deployments/<name>.py`와 `flows/<name>/`은 이름을 1:1로 맞춥니다. deployment
-파일을 열었을 때 대응하는 워크플로 위치를 이름만 보고 알 수 있어야 합니다.
+deployment는 대응 flow와 같은 도메인에 둡니다. `deployments/stores/photoism.py`는
+`flows/stores/collect/photoism.py`를 실행합니다. 기존 Prefect flow와 deployment의
+등록 이름은 경로를 이동해도 유지합니다.
 
 ## 워크플로 추가하기
 
-`serve.py`와 `deploy.py`는 건드리지 않습니다. 두 곳만 손대면 됩니다.
+`serve.py`와 `deploy.py`는 건드리지 않습니다. flow와 deployment를 추가합니다.
 
-먼저 `flows/<name>/`을 만들고 task를 역할별 모듈에 담습니다. 여러 워크플로가
-함께 쓰는 task는 `flows/common/`에 둡니다.
+먼저 `src/neki_workflow/flows/<도메인>/<작업>/`을 만들고 task를 역할별 모듈에 담습니다.
+브랜드 수집기는 `collect/<브랜드>.py`, 별도 task는 `collect/<브랜드>_stores.py`로 추가하며
+브랜드별 하위 폴더는 만들지 않습니다. 지점 flow가 함께 쓰는 코드는 `src/neki_workflow/flows/stores/common/`에 둡니다.
+도메인을 가로질러 공유하는 코드만 `src/neki_workflow/flows/common/`에 둡니다.
 
 ```python
-# flows/daily_sync/orders.py
+# src/neki_workflow/flows/example/daily_sync/orders.py
 from prefect import task
 
 
@@ -136,10 +142,10 @@ def fetch_orders() -> list[dict]:
 같은 디렉토리의 `flow.py`에서 순서를 조립합니다.
 
 ```python
-# flows/daily_sync/flow.py
+# src/neki_workflow/flows/example/daily_sync/flow.py
 from prefect import flow
 
-from flows.daily_sync.orders import fetch_orders
+from neki_workflow.flows.example.daily_sync.orders import fetch_orders
 
 
 @flow(name="daily-sync")
@@ -150,20 +156,20 @@ def daily_sync() -> None:
 `__init__.py`에서 flow만 재노출합니다.
 
 ```python
-# flows/daily_sync/__init__.py
-from flows.daily_sync.flow import daily_sync
+# src/neki_workflow/flows/example/daily_sync/__init__.py
+from neki_workflow.flows.example.daily_sync.flow import daily_sync
 
 __all__ = ["daily_sync"]
 ```
 
-마지막으로 `deployments/<name>.py`에 `RunnerDeployment`를 반환하는 `build()`를
+마지막으로 `src/neki_workflow/deployments/example/daily_sync.py`에 `RunnerDeployment`를 반환하는 `build()`를
 정의합니다. `serve.py`와 `deploy.py`가 이 이름으로 찾아가므로 함수명은 반드시
 `build`여야 합니다.
 
 ```python
 from prefect.deployments.runner import RunnerDeployment
 
-from flows.daily_sync import daily_sync
+from neki_workflow.flows.example.daily_sync import daily_sync
 
 
 def build() -> RunnerDeployment:
@@ -317,7 +323,7 @@ Kakao Developers에서 앱을 만들고 `앱` > `플랫폼 키` > **REST API 키
 `iframe`(`tab000`, `tab00`)으로 나뉘어 있고 사람이 손으로 만든 텍스트 위젯이라
 주소가 두 줄로 쪼개진 항목이 있으며, 무엇보다 제주 지점 주소로 서울 주소가 들어가
 있는 등 **사이트가 틀린 값을 줍니다.** 자세한 근거는
-`flows/photolabplus_stores/flow.py`의 docstring에 있습니다.
+`src/neki_workflow/flows/stores/collect/photolabplus.py`의 docstring에 있습니다.
 
 비룸스튜디오는 브랜드 사이트가 아니라 Kakao 장소검색만이 수집원입니다.
 `broomstudio.co.kr`이 `www`, `m` 서브도메인까지 모두 NXDOMAIN이라 긁을 사이트가
@@ -330,7 +336,7 @@ Kakao Developers에서 앱을 만들고 `앱` > `플랫폼 키` > **REST API 키
 
 ```bash
 uv run --env-file .env python -c \
-  "from flows.picdot_stores import picdot_stores; picdot_stores(persist=False)"
+  "from neki_workflow.flows.stores.collect.picdot import picdot_stores; picdot_stores(persist=False)"
 ```
 
 좌표 보정까지 끄려면 `geocode`도 함께 끕니다. 파싱만 볼 때는 Kakao를 부를 이유가
@@ -338,7 +344,7 @@ uv run --env-file .env python -c \
 
 ```bash
 uv run --env-file .env python -c \
-  "from flows.planbstudio_stores import planbstudio_stores; \
+  "from neki_workflow.flows.stores.collect.planbstudio import planbstudio_stores; \
    planbstudio_stores(persist=False, geocode=False)"
 ```
 
@@ -466,3 +472,60 @@ UI에서 꺼둔 스케줄이 배포할 때마다 되살아납니다. Airflow에�
 
 **따라서 운영 스케줄 등록은 반드시 `deploy.py`를 거쳐야 합니다.** `prefect deploy`나
 `flow.deploy()`를 직접 호출하면 보존 로직을 건너뛰어 꺼둔 스케줄이 되살아납니다.
+
+## 브랜드 소식 수집 (events)
+
+정책은 `docs/spec/events-collect.md`, 상위 설계는
+[Sprint HLD](https://sprint.suitestudy.com:4641/wiki/cmve1qomb005hka01j1l6xpm9)입니다.
+포토시그니처 프레임과 하루필름 공지를 `flows/events/collect/`에서 수집합니다.
+OCR·기간 판정·운영 DB 반영은 후속 enrich의 책임입니다.
+
+- 브랜드: 실행 인자 없음. 출처 모듈이 `Platform` 값(`tb_brand.code`)을 원문 `brand_code`에 기록. 운영 `brand_id` 변환은 enrich 책임
+- `pages`: 수집할 목록 페이지 수, 기본 1. 전체 이력 수집을 보장하지 않음
+- `max_posts`: 로컬 확인용 게시물 수 제한, 기본 제한 없음
+- `persist=False`: S3 쓰기 없이 원문·이미지 다운로드와 검증 수행
+- 수동 deployment: `photosignature-events`, `harufilm-events`. cron 없음
+
+```bash
+make photosignature-events
+make harufilm-events
+```
+
+### 로컬 S3 저장 (LocalStack)
+
+로컬 `.env`는 `.env.example`의 `neki-local` 프로파일을 사용합니다.
+`AWS_ENDPOINT_URL=http://localhost:4576`, `LOCALSTACK_PORT=4576`,
+`S3_BUCKET=team-neki-workflow-local`을 서로 맞춥니다. Docker가 실행 중이어야 합니다.
+수집 코드의 환경 분기 없이 boto3가 이 설정으로 LocalStack에 연결합니다.
+
+```bash
+# .env가 없다면 .env.example을 복사해 준비
+make localstack
+
+make photosignature-events
+make harufilm-events
+make s3-ls
+```
+
+`make` 명령은 `.env`를 읽습니다. Python을 직접 실행할 때는
+`uv run --env-file .env`를 사용해야 같은 LocalStack 설정이 적용됩니다.
+로컬에서 소량만 확인하려면 flow 인자에 `max_posts=1, persist=True`를 지정합니다.
+`make localstack-down`으로 컨테이너를 삭제하면 로컬 버킷 데이터도 사라집니다.
+
+기존 `S3_BUCKET`·AWS 자격증명을 사용하며 DB 접속은 필요하지 않습니다.
+게시물별 `events/raw/<출처>/<게시물 ID>/`에 원문 JSON과 `images/<해시>.<확장자>`를
+저장합니다. 상세 확인과 이미지 저장이 모두 끝나면 `post.json`을 남깁니다.
+수집이 끝난 ID는 출처별 `collected.csv`(`external_id,status,recorded_at`)에 모아
+배치 시작 시 한 번 읽습니다. `status`는 완료(`complete`) 또는 영구 실패(`failed`)입니다.
+CSV에 있는 ID는 상세·이미지·완료 원문 조회를 생략하고, 없는 ID만 `post.json`으로
+복구하거나 신규 수집합니다. 배치 종료 시 새 ID를 조건부 병합 저장합니다.
+flow는 `discovered`, `skipped`, `collected`, `recovered`, `incomplete`, `failed` 건수와
+미완료·영구 실패 ID별 사유 `reasons`를 반환합니다.
+갱신·복구 상세는 [CSV 완료 인덱스 LLD](docs/lld/events-web-collect.md)에 있습니다.
+5xx·네트워크 오류로 미완료된 게시물은 다음 실행에서 다시 수집합니다. `data:` 주소·이미지 4xx·
+파일 검증 실패만 남은 게시물은 영구 실패로 기록해 생략하며, 다시 수집하려면 CSV에서
+해당 행을 지웁니다. 완료된 게시물의 수정·삭제는 자동 감지하지 않습니다.
+
+이미지 검증은 Pillow로 수행합니다. HTTP 오류 페이지나 손상된 파일은 이미지로
+저장하지 않습니다. 개별 파일 실패는 URL·원문 순서와 함께 남기고, 차단 응답은
+해당 출처 수집을 중단합니다. 보존 기간·정기 실행 주기는 아직 적용하지 않습니다.

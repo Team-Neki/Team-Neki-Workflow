@@ -21,6 +21,8 @@ dependencies = [
     # (prefecthq/prefect:3.8.5-*-kubernetes)에 든 것과 같은 버전이어야 한다.
     # 다르면 이미지 안의 prefect-kubernetes 가 교체되어 worker 가 깨진다.
     "prefect-kubernetes==0.7.12",
+    # 브랜드 소식 이미지의 실제 파일 형식과 손상 여부를 검증한다.
+    "pillow>=11.0",
 ]
 
 [dependency-groups]
@@ -32,4 +34,8 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["deployments", "flows"]
+packages = ["src/neki_workflow"]
+
+[tool.pytest.ini_options]
+# deploy.py 는 src 밖 루트 스크립트라 tests 가 import 하려면 루트를 경로에 둔다.
+pythonpath = ["."]
